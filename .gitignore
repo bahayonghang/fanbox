@@ -19,3 +19,8 @@ build/*
 
 # 验证脚本的截图产物（可复跑重生成，不入库）
 experiments/bugfix-202606/shots/
+
+.agents/
+.claude/
+.codex/
+ref/
