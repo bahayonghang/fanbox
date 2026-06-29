@@ -9,6 +9,7 @@ const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { terminalCwd } = require('../server-platform');
 
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
@@ -701,31 +702,9 @@ function readLastEventTime(file, size) {
   return 0;
 }
 
-// lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，
-// 正中这个坑：标签标题乱码、双击定位失效）。调 lsof 时显式给 UTF-8 locale，这里再留一层 \xNN 解码兜底
-function decodeLsofPath(s) {
-  if (!/\\x[0-9a-fA-F]{2}/.test(s)) return s;
-  const bytes = [];
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && s[i + 1] === 'x' && /^[0-9a-fA-F]{2}$/.test(s.slice(i + 2, i + 4))) {
-      bytes.push(parseInt(s.slice(i + 2, i + 4), 16));
-      i += 3;
-    } else {
-      for (const b of Buffer.from(s[i], 'utf8')) bytes.push(b);
-    }
-  }
-  return Buffer.from(bytes).toString('utf8');
-}
-// 取某终端 shell 的真实当前目录（用 lsof 查 pty 子进程的 cwd）
+// 取某终端 shell 的真实当前目录；平台差异收敛在 server-platform.js
 function termCwdByPid(pid) {
-  return new Promise((resolve) => {
-    if (!pid) return resolve('');
-    require('child_process').exec(`lsof -a -p ${pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 3000 }, (err, stdout) => {
-      if (err) return resolve('');
-      const line = (stdout || '').split('\n').find((l) => l.startsWith('n'));
-      resolve(line ? decodeLsofPath(line.slice(1)) : '');
-    });
-  });
+  return terminalCwd(pid).then((cwd) => cwd || '');
 }
 // 取某终端 shell 的真实当前目录，实现「定位到终端目录」
 ipcMain.handle('pty:cwd', async (e, { id }) => {

@@ -13,10 +13,11 @@ const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { exec, spawn, execFile } = require('child_process');
+const { exec, execFile } = require('child_process');
 const { URL } = require('url');
 const { whichBin } = require('./electron/platform/shell');
 const { fullEnv } = require('./electron/platform/env');
+const serverPlatform = require('./server-platform');
 
 const HOME = os.homedir();
 const PORT = Number(process.env.FANBOX_PORT) || 4567;
@@ -344,53 +345,8 @@ async function grepFiles(query, rootPath) {
   return { results, truncated };
 }
 
-// ---------- Spotlight（mdfind）内容搜索：白嫖系统索引 ----------
-// 覆盖全文 + PDF/docx + 截图/图片里的 OCR 文字，毫秒级返回；Spotlight 没索引到的（代码目录等）由 grep 兜底
-function mdfind(args) {
-  return new Promise((resolve) => {
-    execFile('mdfind', args, { timeout: 6000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
-      resolve(err ? null : String(stdout).split('\n').filter(Boolean));
-    });
-  });
-}
 async function contentSearch(query, rootPath) {
-  const root = resolvePath(rootPath);
-  const q = (query || '').trim();
-  if (!q || q.length < 2) return { results: [] };
-  // 属性查询而非自由文本：CJK 子串匹配更稳；[cd] = 忽略大小写/音调
-  const esc = q.replace(/[\\"*]/g, '');
-  const paths = await mdfind(['-onlyin', root, `(kMDItemTextContent == "*${esc}*"cd) || (kMDItemDisplayName == "*${esc}*"cd)`]);
-  if (paths === null || !paths.length) {
-    const fb = await grepFiles(query, rootPath); // mdfind 不可用或无命中 → 原 grep 兜底
-    return { ...fb, engine: 'grep' };
-  }
-  const results = [];
-  const deadline = Date.now() + 2500;
-  for (const p of paths) {
-    if (results.length >= 60 || Date.now() > deadline) break;
-    if (/\/(node_modules|\.git|Library\/Caches)\//.test(p)) continue;
-    let st; try { st = await fsp.stat(p); } catch { continue; }
-    if (st.isDirectory()) continue;
-    const name = path.basename(p);
-    results.push({ name, path: p, isDir: false, kind: kindOf(name, false), hidden: name.startsWith('.'), size: st.size, mtime: st.mtimeMs, btime: st.birthtimeMs || 0 });
-  }
-  results.sort((a, b) => b.mtime - a.mtime); // 近改优先，「我刚写的那句话」浮在最上面
-  // 给文本类命中补行级预览（只读前几个小文件，别拖慢整体）
-  const lower = q.toLowerCase();
-  let read = 0;
-  for (const r of results) {
-    if (read >= 12) break;
-    if (r.kind !== 'text' || r.size > 512 * 1024) continue;
-    read++;
-    let content; try { content = await fsp.readFile(r.path, 'utf8'); } catch { continue; }
-    const lines = content.split('\n');
-    const hits = [];
-    for (let i = 0; i < lines.length && hits.length < 3; i++) {
-      if (lines[i].toLowerCase().includes(lower)) hits.push({ line: i + 1, text: lines[i].trim().slice(0, 200) });
-    }
-    if (hits.length) r.hits = hits;
-  }
-  return { results, truncated: paths.length > results.length, engine: 'spotlight' };
+  return serverPlatform.contentSearch(query, rootPath, { platform: PLATFORM, resolvePath, grepFiles, kindOf });
 }
 
 async function recentFiles(rootPath) {
@@ -777,121 +733,12 @@ async function projectMemory(p) {
   return { ok: true, cwd, sessions: sessions.filter((s) => s.title || s.files.length).slice(0, 40) };
 }
 
-// ---------- 磁盘占用透视：算清当前目录每个子项的真实占用 ----------
-// 文件直接 stat（快）；目录一次 du -sk 批量算。du 碰到无权限子目录会报错但仍输出能算的部分，所以忽略 err 只用 stdout
 async function diskUsage(p) {
-  const dir = resolvePath(p);
-  let names;
-  try { names = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return { ok: false, error: '读取失败：' + e.message }; }
-  const dirs = [], items = [];
-  await Promise.all(names.map(async (d) => {
-    const full = path.join(dir, d.name);
-    if (d.isDirectory() && !d.isSymbolicLink()) { dirs.push(full); return; }
-    try { const st = await fsp.lstat(full); if (st.isFile()) items.push({ name: d.name, size: st.size, isDir: false }); } catch { /* */ }
-  }));
-  if (dirs.length) {
-    const out = await new Promise((resolve) => {
-      execFile('du', ['-sk', ...dirs], { timeout: 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
-    });
-    for (const line of out.split('\n')) {
-      const m = line.match(/^(\d+)\s+(.+)$/);
-      if (m) items.push({ name: path.basename(m[2]), size: Number(m[1]) * 1024, isDir: true });
-    }
-  }
-  items.sort((a, b) => b.size - a.size);
-  const total = items.reduce((a, b) => a + b.size, 0);
-  return { ok: true, dir, total, items: items.slice(0, 60), more: Math.max(0, items.length - 60) };
-}
-
-// 压缩包内容清单：全用系统自带工具（unzip / bsdtar / gzip），保持零依赖
-// 直接读 zip 中央目录拿文件名：按「通用位标记 bit 11 = UTF-8」决定编码，没设就按 GBK 解（中文名才不乱码）。
-// 系统 unzip/bsdtar 会先把字节转码、丢失原始编码，没法事后挽救，所以自己解。zip64/异常结构返回 null 交回退。
-async function zipNames(file, MAX) {
-  let fd;
-  try {
-    fd = await fsp.open(file, 'r');
-    const { size } = await fd.stat();
-    const tailLen = Math.min(size, 65557); // EOCD 22 字节 + 最多 65535 注释
-    const tail = Buffer.alloc(tailLen);
-    await fd.read(tail, 0, tailLen, size - tailLen);
-    let eocd = -1;
-    for (let i = tail.length - 22; i >= 0; i--) { if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
-    if (eocd < 0) return null;
-    const cdCount = tail.readUInt16LE(eocd + 10);
-    const cdSize = tail.readUInt32LE(eocd + 12);
-    const cdOffset = tail.readUInt32LE(eocd + 16);
-    if (cdOffset === 0xffffffff || cdSize === 0xffffffff) return null; // zip64，超出本简单解析
-    const cd = Buffer.alloc(cdSize);
-    await fd.read(cd, 0, cdSize, cdOffset);
-    const gbk = new TextDecoder('gbk');
-    const out = [];
-    let p = 0;
-    for (let i = 0; i < cdCount && p + 46 <= cd.length; i++) {
-      if (cd.readUInt32LE(p) !== 0x02014b50) break; // central file header 签名
-      const flag = cd.readUInt16LE(p + 8);
-      const usize = cd.readUInt32LE(p + 24);
-      const nameLen = cd.readUInt16LE(p + 28);
-      const extraLen = cd.readUInt16LE(p + 30);
-      const commentLen = cd.readUInt16LE(p + 32);
-      const nameBuf = cd.subarray(p + 46, p + 46 + nameLen);
-      let nm;
-      if (flag & 0x800) nm = nameBuf.toString('utf8');
-      else { try { nm = gbk.decode(nameBuf); } catch { nm = nameBuf.toString('utf8'); } }
-      out.push({ name: nm, size: usize });
-      p += 46 + nameLen + extraLen + commentLen;
-      if (out.length > MAX) break;
-    }
-    return out;
-  } catch { return null; } // 解析失败一律交给 unzip 兜底
-  finally { if (fd) await fd.close().catch(() => {}); }
+  return serverPlatform.diskUsage(p, { platform: PLATFORM, resolvePath });
 }
 
 async function archiveList(p) {
-  const file = resolvePath(p);
-  try { await fsp.stat(file); } catch { return { ok: false, error: '文件不存在' }; }
-  const name = path.basename(file).toLowerCase();
-  // 压缩包里的中文名常是 GBK/CP936 且没设 UTF-8 标志位，按 UTF-8 读会乱码：
-  // 拿原始字节，先严格按 UTF-8 解，失败（多半是 GBK 中文名）再回退 GBK。
-  const decodeMaybeGbk = (buf) => {
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-    catch { try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('latin1'); } }
-  };
-  const run = (cmd, args) => new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => (err ? reject(err) : resolve(decodeMaybeGbk(stdout))));
-  });
-  const MAX = 800;
-  const entries = [];
-  try {
-    if (/\.(zip|jar)$/.test(name)) {
-      const parsed = await zipNames(file, MAX); // 自读中央目录，中文名按 GBK/UTF-8 正确解（unzip 会乱码）
-      if (parsed) {
-        entries.push(...parsed);
-      } else { // zip64 / 异常结构本解析器够不着：回退 unzip（名字可能乱码，但至少列得出）
-        const out = await run('unzip', ['-l', '--', file]);
-        for (const line of out.split('\n')) {
-          const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
-          if (m) entries.push({ name: m[2], size: Number(m[1]) });
-          if (entries.length > MAX) break;
-        }
-      }
-    } else if (/\.(tar|tgz|tbz2?|txz)$/.test(name) || /\.tar\.(gz|bz2|xz|zst)$/.test(name)) {
-      const out = await run('tar', ['-tf', file]); // bsdtar 自动识别压缩格式
-      for (const line of out.split('\n')) {
-        if (line.trim()) entries.push({ name: line });
-        if (entries.length > MAX) break;
-      }
-    } else if (/\.gz$/.test(name)) {
-      const out = await run('gzip', ['-l', file]);
-      const m = out.split('\n')[1] && out.split('\n')[1].match(/^\s*\d+\s+(\d+)/);
-      entries.push({ name: path.basename(file, '.gz'), size: m ? Number(m[1]) : undefined });
-    } else {
-      return { ok: false, error: '7z / rar 没有系统自带的解析工具，可在系统解压软件中打开' };
-    }
-  } catch (e) {
-    return { ok: false, error: '读取失败：' + (e.message || '').split('\n')[0] };
-  }
-  const truncated = entries.length > MAX;
-  return { ok: true, entries: entries.slice(0, MAX), truncated };
+  return serverPlatform.archiveList(p, { platform: PLATFORM, resolvePath });
 }
 
 // 移动文件到目标目录（截图直通车「收进素材」等用）：同卷 rename，跨卷回退拷贝；同名自动加序号防覆盖
@@ -998,7 +845,7 @@ async function locatePath(p, name, root, tail, alt, roots) {
     // Spotlight 兜底（macOS）：截断路径常指向所有项目根之外（桌面、下载、临时目录），
     // 目录遍历够不着；按文件名全盘查，精确同名里取 mtime 最新的（偏向「刚生成的那个」）
     if (process.platform === 'darwin') {
-      const paths = await mdfind(['-name', name]);
+      const paths = await serverPlatform.findByName(name, { platform: PLATFORM });
       let best = null;
       for (const f of (paths || []).slice(0, 200)) {
         if (path.basename(f) !== name) continue;
@@ -1076,51 +923,7 @@ async function saveImage({ path: target, dataUrl, newName }) {
 }
 
 function openInOS(target, withApp) {
-  return new Promise((resolve) => {
-    let cmd, args;
-    if (withApp === 'terminal') {
-      // 在该目录（文件则取其所在目录）打开系统终端，找回项目后一键去跑
-      const dir = (() => { try { return fs.statSync(target).isDirectory() ? target : path.dirname(target); } catch { return path.dirname(target); } })();
-      if (PLATFORM === 'darwin') cmd = `open -a Terminal ${shellQuote(dir)}`;
-      else if (PLATFORM === 'win32') cmd = `start "" cmd /K cd /d "${dir}"`;
-      else cmd = `x-terminal-emulator --working-directory=${shellQuote(dir)} || gnome-terminal --working-directory=${shellQuote(dir)} || xterm`;
-      exec(cmd, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: 'terminal' }));
-      return;
-    }
-    if (withApp === 'editor') {
-      // 用 VS Code 打开（文件或文件夹）
-      cmd = 'code';
-      args = [target];
-      const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
-      child.on('error', () => {
-        // 没装 code CLI，回退到系统默认
-        openDefault(target, withApp).then(resolve);
-      });
-      child.on('spawn', () => { child.unref(); resolve({ ok: true, with: 'editor' }); });
-      return;
-    }
-    openDefault(target, withApp).then(resolve);
-  });
-}
-
-function openDefault(target, withApp) {
-  return new Promise((resolve) => {
-    let cmd;
-    if (PLATFORM === 'darwin') {
-      if (withApp === 'reveal') cmd = `open -R ${shellQuote(target)}`;
-      else cmd = `open ${shellQuote(target)}`;
-    } else if (PLATFORM === 'win32') {
-      if (withApp === 'reveal') cmd = `explorer /select,"${target}"`;
-      else cmd = `start "" "${target}"`;
-    } else {
-      if (withApp === 'reveal') cmd = `xdg-open ${shellQuote(path.dirname(target))}`;
-      else cmd = `xdg-open ${shellQuote(target)}`;
-    }
-    exec(cmd, (err) => {
-      if (err) resolve({ ok: false, error: err.message });
-      else resolve({ ok: true, with: withApp || 'default' });
-    });
-  });
+  return serverPlatform.openInOS(target, withApp, { platform: PLATFORM });
 }
 
 function shellQuote(s) {
@@ -1163,25 +966,9 @@ async function serveStatic(req, res, urlPath) {
 const THUMB_IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif']);
 const ALPHA_IMG_EXT = new Set(['png', 'gif', 'webp', 'avif']); // 可能带透明通道：缩略图必须出 png，jpeg 会把透明拍成白底
 const thumbInflight = new Map(); // cacheFile -> Promise，去重并发生成
-function run(cmd, args) {
-  return new Promise((resolve, reject) => execFile(cmd, args, { timeout: 15000 }, (e) => (e ? reject(e) : resolve())));
-}
 // 图片走 sips 缩放（快）；视频/PDF/其它走 qlmanage QuickLook 抽帧
 async function generateThumb(src, e, size, cacheFile, isImg) {
-  await fsp.mkdir(THUMB_DIR, { recursive: true });
-  if (isImg) {
-    const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
-    await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
-    return;
-  }
-  const tmpDir = path.join(THUMB_DIR, '_ql_' + process.pid + '_' + crypto.randomBytes(4).toString('hex'));
-  await fsp.mkdir(tmpDir, { recursive: true });
-  try {
-    await run('qlmanage', ['-t', '-s', String(size), '-o', tmpDir, src]);
-    const png = (await fsp.readdir(tmpDir)).find((f) => f.endsWith('.png'));
-    if (!png) throw new Error('no thumb');
-    await fsp.rename(path.join(tmpDir, png), cacheFile);
-  } finally { fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {}); }
+  return serverPlatform.generateThumb(src, e, size, cacheFile, isImg, { platform: PLATFORM });
 }
 // 缩略图缓存按总体积上限做 LRU 裁剪（同一文件改一次就多一个缓存键，不清会无限涨）
 async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
@@ -1239,7 +1026,7 @@ async function serveHeicAsJpeg(req, res, file, st) {
   if (fs.existsSync(cacheFile)) return send();
   let pr = thumbInflight.get(cacheFile);
   if (!pr) {
-    pr = (async () => { await fsp.mkdir(THUMB_DIR, { recursive: true }); await run('sips', ['-s', 'format', 'jpeg', file, '--out', cacheFile]); })()
+    pr = serverPlatform.transcodeHeic(file, cacheFile, { platform: PLATFORM })
       .finally(() => thumbInflight.delete(cacheFile));
     thumbInflight.set(cacheFile, pr);
   }
