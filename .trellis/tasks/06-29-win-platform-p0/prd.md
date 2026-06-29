@@ -33,6 +33,8 @@
 - [ ] AC2.4 代理/ANTHROPIC_BASE_URL 在 Windows 不丢（实测设了代理时子进程能用）。
 - [ ] AC2.5 macOS 端 driver/env 行为零回归（darwin 走原路径）。
 - [ ] AC2.6 persona 含引号/换行/中文时不再因转义出错（`shell:false` 直传 argv）。
+- [ ] AC2.7 Windows child env 保留正确 home/credentials 路径（Claude/Codex 能读既有登录态；重点核对 `USERPROFILE`、`APPDATA`、`LOCALAPPDATA`）。
+- [ ] AC2.8 ConPTY/内嵌终端基础冒烟通过（PowerShell 能启动、输入命令、cwd 正常）；C2 不改 PTY 主逻辑。
 
 ## Out of Scope
 
@@ -41,4 +43,4 @@
 
 ## Notes（排序与验证）
 
-C3/C4 的前置（建立 `platform/` 目录与契约）。需在 **真实 Windows 环境**冒烟验证（含 Claude 凭据路径 `~/.claude/.credentials.json`、Codex Windows 稳定性——父 design.md §8）。
+C3/C4 的前置（建立 `platform/` 目录与契约）。需在 **真实 Windows 环境**冒烟验证（含 Claude/Codex credentials 路径、Codex Windows 稳定性、ConPTY 基础终端——父 design.md §8）。

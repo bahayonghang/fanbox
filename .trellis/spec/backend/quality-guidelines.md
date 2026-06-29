@@ -102,15 +102,96 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 
 ---
 
+## Scenario: Windows Agent Platform Shell/Env Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to agent process launch, CLI discovery, GUI-started environment rebuilding, or proxy/home variables in `electron/platform/*`, `electron/wechat/driver.js`, or agent CLI checks in `server.js`.
+- This is an infra boundary. Keep it zero-runtime-dependency and Node-built-in only.
+- Do not expand this scenario into unrelated OS command migrations such as disk usage, archive, thumbnails, Spotlight, or update channels.
+
+### 2. Signatures
+
+- `spawnCommand(bin, args, options) -> Promise<Result>` launches a command with argv, stdin, env, cwd, idle timeout, max timeout, and optional stdout line callback.
+- `whichBin(bin, options) -> Promise<string|null>` returns an absolute launch path or `null`.
+- `fullEnv() -> Promise<NodeJS.ProcessEnv>` returns the merged child environment used by agent processes.
+- `electron/wechat/driver.js` keeps `which(bin) -> Promise<boolean>`, `runClaude(...)`, and `runCodex(...)` as the public driver surface.
+
+### 3. Contracts
+
+- Agent prompts go through stdin, not command strings.
+- Claude/Codex options are argv array entries. Persona text with quotes, newlines, or Chinese must be passed as one argv value or stdin content, never shell-quoted into a command string.
+- Windows child env must preserve `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, and a working `Path`/`PATH` value so Claude/Codex credentials and user-level npm shims remain discoverable.
+- `fullEnv()` may supplement proxy variables from OS settings only when no proxy env is already present; explicit env values win.
+- `whichBin()` must prefer direct PATH/PATHEXT search on Windows and may use `where.exe` only as fallback. On macOS, the login-shell `command -v` fallback is allowed to preserve Finder/Dock startup behavior.
+- Windows `.cmd` and `.bat` shims are not spawned directly. They must be launched through `cmd.exe /d /s /c` with `windowsVerbatimArguments: true`.
+
+### 4. Validation & Error Matrix
+
+- Windows `.cmd` shim spawned directly with `shell:false` -> `EINVAL` or missing launch; wrap it with `cmd.exe /d /s /c`.
+- Prompt/persona shell-quoted into one command string -> broken quotes/newlines or injection risk; pass argv plus stdin.
+- GUI PATH lacks user npm/global shim dirs -> `whichBin('claude'/'codex')` returns `null`; merge Windows PATH keys and add known user-level dirs.
+- Existing `http_proxy`/`https_proxy` overwritten by OS proxy fallback -> user-selected proxy is lost; only fill proxy vars when none are set.
+- Missing home/app data vars -> Claude/Codex cannot find credentials; normalize `USERPROFILE`/`HOME` without deleting `APPDATA`/`LOCALAPPDATA`.
+- Timeout kills only the shell wrapper on Windows -> child agent survives; use process-tree kill for timed out Windows commands.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `runClaude()` passes `['-p', '--output-format', 'stream-json', '--append-system-prompt', persona]` and writes the user prompt to stdin.
+- Good: `whichBin('codex')` returns an absolute `.exe`, `.cmd`, `.bat`, or `.com` path from the merged GUI-safe env.
+- Base: macOS still uses shell env dump and `scutil --proxy`; only CLI discovery may fall back to `command -v` in a login shell.
+- Bad: `spawn(loginShell(), ['-lc', cmd])` for agent work, PowerShell `-lc`, or POSIX `shq()` escaping inside the agent driver.
+
+### 6. Tests Required
+
+- Syntax: `node --check electron/platform/env.js electron/platform/shell.js electron/wechat/driver.js server.js`.
+- Unit-style platform scripts: `npm run test:platform`.
+- Repo gates: `just check` and `just test`.
+- Review grep: `rg -n "spawn\\(loginShell|\\['-lc'|shq\\(|command -v|/bin/zsh|/bin/sh" electron\wechat electron\platform server.js`.
+- Windows smoke: `whichBin('node')`, `whichBin('claude')`, `whichBin('codex')`, `whichBin('git')`, and `whichBin('gh')` in the GUI-style env.
+- Agent smoke: `spawnCommand('claude', ['--version'])`, `spawnCommand('codex', ['--version'])`, and at least one real `codex exec`/Claude stream-json request when local credentials and network allow it.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+const cmd = `claude -p --append-system-prompt ${shq(persona)}`;
+spawn(loginShell(), ['-lc', cmd], { shell: false });
+```
+
+This assumes a POSIX shell and breaks on Windows, especially under PowerShell.
+
+#### Correct
+
+```js
+const args = ['-p', '--append-system-prompt', persona];
+await spawnCommand('claude', args, { stdinText: userPrompt, env: await fullEnv() });
+```
+
+Use argv and stdin for agent execution. If `whichBin()` resolves a Windows `.cmd` or `.bat` shim, `spawnCommand()` must internally launch:
+
+```js
+spawn('cmd.exe', ['/d', '/s', '/c', '""C:\\path\\tool.cmd" "arg with spaces""'], {
+  shell: false,
+  windowsVerbatimArguments: true,
+});
+```
+
+---
+
 ## Testing Requirements
 
-**目前没有自动化测试。** `package.json` 没有 `test` 脚本、未引入 jest/vitest。子代理不要凭空捏造「运行 xxx 测试」的验收步——真实可用的人工验收是：
+**No formal test framework.** The project still does not use Jest/Vitest or a lint framework. Use the real repo gates that exist, not invented test commands:
 
 - `node --check server.js`（语法）。
+- `node --check <changed-js-files>` for Electron/platform scripts.
+- `npm run test:platform` for the platform shell/env adapter.
+- `just check` and `just test` for repo-level checks.
 - `node server.js` 启动，浏览器访问 `http://localhost:4567` 验证改动功能。
 - Electron：`npm run app`。
 
-如未来引入测试框架，才在该文件补 Testing 章节，不要先写跑测试的占位。
+If a formal test framework is introduced later, update this section with the real command and assertion scope.
 
 ---
 

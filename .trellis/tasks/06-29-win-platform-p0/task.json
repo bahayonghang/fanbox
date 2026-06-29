@@ -3,7 +3,7 @@
   "name": "win-platform-p0",
   "title": "平台抽象层与 P0 修复(env-shell-driver)",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
