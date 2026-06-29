@@ -263,6 +263,86 @@ Keep HTTP/API ownership in `server.js`, but put platform branching and system co
 
 ---
 
+## Scenario: Electron macOS-Exclusive Capability Adapter Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to Electron desktop capabilities that were originally macOS-only: power/lid wake behavior, file clipboard, screenshot watching, or the IPC payloads consumed by `public/app.js`.
+- These platform branches belong in `electron/platform/{power,clipboard,screenshot}.js`, not inline in `electron/main.js`.
+- Keep the adapter zero-runtime-dependency. Prefer Electron built-ins or existing system commands; do not add ffi/native packages for an MVP fallback.
+
+### 2. Signatures
+
+- `platformPower.refreshPowerGuard(ctx) -> { ok, supported, platform, mode?, active, want?, unsupported?, reason? }`
+- `platformPower.powerState(ctx) -> { ok, supported, platform, mode?, stayAwake, active, unsupported?, reason? }`
+- `platformPower.cleanupPowerGuard(ctx) -> boolean`
+- `platformClipboard.copyImage(filePath, deps) -> { ok, error? }`
+- `platformClipboard.copyFile(filePath, deps) -> Promise<{ ok, mode?, error? }>`
+- `platformScreenshot.startShotWatch(ctx) -> { ok, supported, watching, platform, reason? }`
+- IPC keeps `wechat:setStayAwake({ on })`, `wechat:powerState()`, `clip:file({ path })`, and the existing `shot:new` event.
+
+### 3. Contracts
+
+- `electron/main.js` owns user intent (`lidIntent`, `wechatStayAwake`), connection state (`wechatConnected`), config persistence, menu rebuilds, and IPC response composition.
+- `electron/platform/power.js` owns native power behavior:
+  - macOS uses the existing `pmset disablesleep` + sudoers + AppleScript admin prompt flow.
+  - Windows uses Electron `powerSaveBlocker.start('prevent-display-sleep')` with `mode:"powerSaveBlocker"` and no admin prompt.
+  - Unsupported platforms return `supported:false`, `unsupported:true`, and `reason:"unsupported-platform"`; never return a bare `"macOS only"` string.
+- `clip:file` returns `mode:"file-object"` on macOS and `mode:"path-text"` for Windows/Linux path-text fallback.
+- `screenshot.startShotWatch()` returns structured unsupported/no-op on non-macOS and must not throw during app startup.
+- Frontend consumers must only update capability support from a boolean `supported` field. A caught IPC failure such as `{}` must not make a hidden/unsupported button visible.
+
+### 4. Validation & Error Matrix
+
+- Windows WeChat stay-awake enabled -> start `powerSaveBlocker`; no sudoers, `pmset`, `osascript`, or admin prompt.
+- Windows WeChat disconnected while intent is on -> keep user intent but report `active:false`; reconnect can activate without another prompt.
+- Linux/unsupported platform -> `{ ok:false, supported:false, unsupported:true, reason:"unsupported-platform" }`; UI hides or disables the control and may toast the unsupported reason.
+- macOS first enable without sudoers -> show the existing admin prompt; user cancel returns `cancelled` or `setup-cancelled`.
+- `clip:file` on Windows/Linux -> write the path text and return `mode:"path-text"`; do not claim real file-object clipboard support.
+- `clip:file` on macOS -> pass the path through AppleScript argv, not by string interpolation.
+- Non-macOS screenshot startup -> return `{ ok:true, supported:false, watching:false }`; no watcher and no startup error.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `electron/main.js` calls `platformPower.powerState(powerContext(...))` and only spreads a structured payload into IPC responses.
+- Good: `public/app.js` branches copy-file text by `r.mode`, and power controls by `supported === true`.
+- Base: Windows file clipboard copies a path string; later `CF_HDROP` work can replace only the adapter branch while preserving the IPC `mode` contract.
+- Bad: `electron/main.js` directly returns `{ ok:false, error:"macOS only" }`, calls `execFile('osascript')` for all platforms, or hardcodes UI visibility from `platform === "darwin"` when the backend already exposes `supported`.
+
+### 6. Tests Required
+
+- Syntax: `node --check electron/platform/power.js electron/platform/clipboard.js electron/platform/screenshot.js electron/main.js public/app.js`.
+- Unit-style platform tests: `npm run test:platform` must include power and clipboard adapter tests.
+- Repo gates: `just check`, `just test`, and `npm run check:vendor-patch`.
+- Review grep: `rg -n "macOS only" electron public` should not match user-facing IPC errors.
+- Review grep: `rg -n "pmset|visudo|fanbox-pmset|osascript" electron/main.js electron/platform` should find macOS-only commands only in platform adapters.
+- Manual smoke when possible: Windows stay-awake toggle has no admin prompt, Windows copy-file copies path text, macOS Finder file paste and screenshot watch still work.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+ipcMain.handle('wechat:setStayAwake', async () => {
+  if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' };
+  execFile('osascript', ['-e', `set the clipboard to (POSIX file "${p}")`]);
+});
+```
+
+This leaks macOS capability assumptions through IPC and interpolates paths into platform scripts.
+
+#### Correct
+
+```js
+ipcMain.handle('wechat:powerState', () => powerStatePayload());
+ipcMain.handle('clip:file', (e, { path: p }) =>
+  platformClipboard.copyFile(p, { platform: process.platform, clipboard }));
+```
+
+The adapter owns platform branching and returns a payload with `supported`, `unsupported`, `reason`, and `mode` fields that the UI can consume without guessing.
+
+---
+
 ## Testing Requirements
 
 **No formal test framework.** The project still does not use Jest/Vitest or a lint framework. Use the real repo gates that exist, not invented test commands:
