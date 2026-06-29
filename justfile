@@ -8,7 +8,7 @@ check:
     node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json ok')"
 
 test: check
-    @echo "No automated test suite is configured yet; run just check for current gates."
+    npm run test:platform
 
 [windows]
 build: build-win

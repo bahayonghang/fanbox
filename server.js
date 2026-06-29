@@ -15,6 +15,8 @@ const os = require('os');
 const crypto = require('crypto');
 const { exec, spawn, execFile } = require('child_process');
 const { URL } = require('url');
+const { whichBin } = require('./electron/platform/shell');
+const { fullEnv } = require('./electron/platform/env');
 
 const HOME = os.homedir();
 const PORT = Number(process.env.FANBOX_PORT) || 4567;
@@ -509,13 +511,7 @@ async function codexOrganizeFlags(bin) {
 }
 
 async function findAgentBin(name) {
-  // GUI 启动的 app 没有用户 shell 的 PATH，走登录 shell 找一次绝对路径
-  return new Promise((resolve) => {
-    execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
-      const out = String(stdout || '').trim().split('\n').pop();
-      resolve(!err && out && out.startsWith('/') ? out : null);
-    });
-  });
+  return whichBin(name, { env: await fullEnv(), timeout: 8000 });
 }
 
 // 最近几次整理日志的一句话摘要，给 agent 当历史参照（日志由 agent 按 brief 约定写入）
@@ -599,7 +595,7 @@ async function releaseInspect(p) {
   const status = await sh('git', ['status', '--porcelain']);
   out.isRepo = status !== null;
   out.dirty = !!(status && status.length);
-  out.gh = !!(await sh('/bin/sh', ['-lc', 'command -v gh']));
+  out.gh = !!(await whichBin('gh', { env: await fullEnv(), timeout: 8000 }));
   out.unreleased = ''; out.hasChangelog = false;
   try {
     const cl = await fsp.readFile(path.join(dir, 'CHANGELOG.md'), 'utf8');

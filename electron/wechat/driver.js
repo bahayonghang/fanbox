@@ -1,10 +1,8 @@
 // 本机 CLI 驱动器：用 claude / codex 的无头模式起一个实例和它对话，作为微信消息的「大脑」。
 // 用户文本一律走 stdin（不进命令行，零转义/长度风险）；claude 用 session_id 续上下文。
 // 复用本机已登录的 claude/codex 凭据，原生读 cwd 下的 CLAUDE.md / AGENTS.md。
-const { spawn } = require('child_process');
 const { fullEnv } = require('./env');
-
-const loginShell = () => process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+const { spawnCommand, whichBin } = require('../platform/shell');
 
 // 跑一条命令，prompt 写 stdin。env 复刻自用户的交互式登录 shell（见 env.js）：
 // 打包后从 Finder 启动会丢掉 PATH/代理/BASE_URL，这里补回来，子进程联网方式和用户终端一致。
@@ -13,31 +11,17 @@ const loginShell = () => process.env.SHELL || (process.platform === 'win32' ? 'p
 // 而代理静默挂起表现为完全无输出。所以 idleMs 内零输出=判卡死（适配任何用户的代理，不挑节点）；
 // maxMs 是防「无限循环一直吐事件」的失控 agent 的绝对天花板，不当主闸门。
 // 返回 timedOut / timeoutReason('idle'|'max')，给上层决定要不要重试（只重试 idle）。
-async function run(cmd, stdinText, cwd, opts = {}, onLine = null) {
+async function run(bin, args, stdinText, cwd, opts = {}, onLine = null) {
   const idleMs = opts.idleMs || 120000;   // 无任何输出超过这条线 → 判连接卡死
   const maxMs = opts.maxMs || 1800000;    // 绝对上限（30min），防失控
   const env = await fullEnv();
-  const started = Date.now();
-  return new Promise((resolve) => {
-    const child = spawn(loginShell(), ['-lc', cmd], { cwd: cwd || env.HOME || process.env.HOME, env });
-    let out = '', err = '', done = false, lineBuf = '', idleTimer = null;
-    const finish = (r) => { if (done) return; done = true; clearTimeout(idleTimer); clearTimeout(maxTimer); resolve({ ...r, ms: Date.now() - started }); };
-    const kill = (reason) => { try { child.kill('SIGKILL'); } catch { /* */ } finish({ ok: false, out, err: err + `\n[超时:${reason}]`, timedOut: true, timeoutReason: reason }); };
-    const armIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => kill('idle'), idleMs); };
-    const maxTimer = setTimeout(() => kill('max'), maxMs);
-    armIdle(); // 从 spawn 起算：覆盖「首字之前」的连接挂起窗口
-    child.stdout.on('data', (d) => {
-      if (done) return; // 杀进程后迟到的 data 不再处理，隔离重试之间的串扰
-      armIdle();
-      const s = d.toString('utf8'); out += s;
-      if (!onLine) return;
-      lineBuf += s; let nl;
-      while ((nl = lineBuf.indexOf('\n')) >= 0) { const line = lineBuf.slice(0, nl); lineBuf = lineBuf.slice(nl + 1); try { onLine(line); } catch { /* */ } }
-    });
-    child.stderr.on('data', (d) => { if (done) return; armIdle(); err += d.toString('utf8'); }); // stderr 也算「活着」
-    child.on('error', (e) => finish({ ok: false, out, err: String(e && e.message || e) }));
-    child.on('close', (code) => finish({ ok: code === 0, code, out, err }));
-    try { child.stdin.write(stdinText || ''); child.stdin.end(); } catch { /* */ }
+  return spawnCommand(bin, args, {
+    cwd,
+    env,
+    stdinText: stdinText || '',
+    idleMs,
+    maxMs,
+    onLine,
   });
 }
 
@@ -73,8 +57,8 @@ function codexNote(item) {
 }
 
 // 检测本机有没有这个 CLI
-function which(bin) {
-  return run(`command -v ${bin} || true`, '', null, { idleMs: 8000, maxMs: 10000 }).then((r) => !!(r.out || '').trim());
+async function which(bin) {
+  return !!(await whichBin(bin, { env: await fullEnv() }));
 }
 
 // claude 无头：续话靠「首轮自带 --session-id <我们生成的 uuid>，之后 --resume 同一 uuid」。
@@ -82,10 +66,15 @@ function which(bin) {
 // onProgress(note)：可选。传了就用 stream-json 边跑边把工具调用播报出去；不传走原来的一次性 json。
 async function runClaude(text, cwd, sessionId, persona, onProgress) {
   const sid = sessionId || require('crypto').randomUUID();
-  const flag = sessionId ? `--resume ${sid}` : `--session-id ${sid}`;
-  const sys = persona ? `--append-system-prompt ${shq(persona)}` : '';
+  const args = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+    ...(persona ? ['--append-system-prompt', persona] : []),
+    ...(sessionId ? ['--resume', sid] : ['--session-id', sid]),
+  ];
   // 一律走 stream-json：持续吐事件，空闲超时才有活动信号可依（非流式 json 整轮沉默会被误杀）。
-  const cmd = `claude -p --output-format stream-json --verbose --dangerously-skip-permissions ${sys} ${flag}`;
   let result = '', outSid = sid, tokens = 0, cost = 0, r, ms = 0, attempts = 0;
   // 空闲卡死（连接挂起）→ 换新进程=新连接重试，最多 3 次（首次 + 2 重试）。每次清空累计，避免串数据。
   for (attempts = 1; attempts <= 3; attempts++) {
@@ -100,7 +89,7 @@ async function runClaude(text, cwd, sessionId, persona, onProgress) {
       }
     };
     if (attempts > 1 && onProgress) onProgress('（连接卡住，正在重连重试…）');
-    r = await run(cmd, text, cwd, { idleMs: 120000, maxMs: 1800000 }, onLine);
+    r = await run('claude', args, text, cwd, { idleMs: 120000, maxMs: 1800000 }, onLine);
     ms += r.ms || 0;
     if (!result) {
       // onLine 漏抓 result 事件 → 兜底再扫一遍全部输出
@@ -124,9 +113,9 @@ async function runClaude(text, cwd, sessionId, persona, onProgress) {
 
 // codex 无头：首轮 `codex exec` 建会话并从 thread.started 抓 thread_id；之后 `codex exec resume <id> -` 续上下文（codex 0.139+）。
 async function runCodex(text, cwd, persona, sessionId, onProgress) {
-  const flags = '--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox';
+  const flags = ['--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'];
   // 续话：prompt 走 stdin（结尾 `-`）；会话已含人格/记忆，不再前置。首轮：把人格+记忆前置到消息里（codex 无独立 system-prompt 入口）。
-  const cmd = sessionId ? `codex exec resume ${sessionId} ${flags} -` : `codex exec ${flags}`;
+  const args = sessionId ? ['exec', 'resume', sessionId, ...flags, '-'] : ['exec', ...flags];
   const stdin = sessionId ? text : (persona ? `${persona}\n\n---\n${text}` : text);
   // 流式：codex 本就吐 JSONL，逐行挑出命令/改文件这类节点播报（最终文本仍走收尾解析）
   const onLine = onProgress ? (line) => {
@@ -141,7 +130,7 @@ async function runCodex(text, cwd, persona, sessionId, onProgress) {
   for (attempts = 1; attempts <= 3; attempts++) {
     result = ''; outSid = sessionId || ''; tokens = 0;
     if (attempts > 1 && onProgress) onProgress('（连接卡住，正在重连重试…）');
-    r = await run(cmd, stdin, cwd, { idleMs: 120000, maxMs: 1800000 }, onLine);
+    r = await run('codex', args, stdin, cwd, { idleMs: 120000, maxMs: 1800000 }, onLine);
     ms += r.ms || 0;
     // --json 输出 JSONL 事件：抓 thread_id + 最终 assistant 文本（后到的覆盖前面）+ 用量（取最大，事件多为累计）
     for (const line of (r.out || '').split('\n')) {
@@ -177,9 +166,6 @@ async function runCodex(text, cwd, persona, sessionId, onProgress) {
 }
 
 function stripAnsi(s) { return s.replace(/\[[0-9;]*m/g, ''); }
-
-// shell 单引号安全包裹（人格可能含引号/换行/中文）
-function shq(s) { return `'${String(s).replace(/'/g, "'\\''")}'`; }
 
 // 启动时预热终端环境复刻（缓存到 env.js，第一条消息就不必等 shell 起来）
 function warmEnv() { fullEnv().catch(() => { /* 失败就退回 process.env，run 时再算 */ }); }
