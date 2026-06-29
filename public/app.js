@@ -740,6 +740,7 @@ function renderPreviewActions(e) {
   const box = $('#preview-actions');
   box.innerHTML = '';
   const clip = window.fanboxClipboard;
+  const copyFileTitle = (window.fanboxEnv && window.fanboxEnv.platform) === 'darwin' ? '复制文件（访达里可粘贴）' : '复制文件路径';
   // 图标为主、文字精简：主操作「打开」留字，其余只留图标 + tooltip
   const acts = [
     { id: 'preview-maxbtn', icon: ic(previewMax ? 'minimize' : 'maximize', 'currentColor', 15), title: previewMax ? '退出全屏' : '全屏放大', fn: () => setPreviewMax() },
@@ -750,7 +751,7 @@ function renderPreviewActions(e) {
     { icon: ic('term', 'currentColor', 15), title: '在编辑器打开', fn: () => openWith(e.path, 'editor') },
     { icon: ic('folder', 'currentColor', 15), title: '在访达显示', fn: () => openWith(e.path, 'reveal') },
     ...(e.kind === 'image' && clip ? [{ icon: ic('image', 'currentColor', 15), title: '复制图片（可粘贴到其它应用）', fn: () => copyImage(e.path) }] : []),
-    ...(clip ? [{ icon: ic('copy', 'currentColor', 15), title: '复制文件（访达里可粘贴）', fn: () => copyFile(e.path) }] : []),
+    ...(clip ? [{ icon: ic('copy', 'currentColor', 15), title: copyFileTitle, fn: () => copyFile(e.path) }] : []),
     { icon: ic('clip', 'currentColor', 15), title: '复制路径', fn: () => copyPath(e.path) },
   ];
   acts.forEach((a) => {
@@ -777,7 +778,11 @@ function renderPreviewFoot(e) {
   f.innerHTML = `<span title="大小">${e.size ? fmtSize(e.size) : '0 B'}</span><span title="创建时间">创建 ${fmtDateTime(e.btime)}</span><span title="修改时间">改 ${fmtDateTime(e.mtime)}</span>`;
 }
 async function copyImage(p) { const r = await window.fanboxClipboard.copyImage(p); toast(r.ok ? '已复制图片，可粘贴到其它应用' : '复制图片失败：' + (r.error || ''), !r.ok); }
-async function copyFile(p) { const r = await window.fanboxClipboard.copyFile(p); toast(r.ok ? '已复制文件，可在访达里粘贴' : '复制文件失败', !r.ok); }
+async function copyFile(p) {
+  const r = await window.fanboxClipboard.copyFile(p);
+  const okText = r && r.mode === 'path-text' ? '已复制文件路径' : '已复制文件，可在访达里粘贴';
+  toast(r && r.ok ? okText : '复制文件失败', !(r && r.ok));
+}
 async function closePreview() {
   if (!await guardDirty()) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
@@ -2107,7 +2112,7 @@ function bindTerminalResizer() {
 const wechatView = {
   offMsg: null, offQr: null, offConn: null, offExpired: null, offPower: null, onKey: null, onDoc: null,
   target: 'codex', targets: [], connected: false, cwdName: '', menuOpen: false,
-  connState: 'unknown', stayAwake: false, platform: '',
+  connState: 'unknown', stayAwake: false, platform: '', powerSupported: false, powerMode: '',
   el() { return $('#wechat-view'); },
   shown() { const e = this.el(); return e && !e.classList.contains('hidden'); },
   toggle() { this.shown() ? this.close() : this.open(); },
@@ -2130,7 +2135,10 @@ const wechatView = {
     // 连接失效（轮询/探活发现 token 掉了）→ 立刻翻红 + 弹重连横幅，不让用户对着死连接干瞪眼
     this.offExpired = window.fanboxWechat.onExpired ? window.fanboxWechat.onExpired(() => this.setConn('expired')) : null;
     // 免密规则丢失等导致后端强制关掉「不待机」→ 同步开关 UI
-    this.offPower = window.fanboxWechat.onPower ? window.fanboxWechat.onPower((m) => { this.stayAwake = !!(m && m.stayAwake); this.syncAwake(); }) : null;
+    this.offPower = window.fanboxWechat.onPower ? window.fanboxWechat.onPower((m) => {
+      this.applyPowerPayload(m);
+      this.syncAwake();
+    }) : null;
     this.loadPower();
     await this.detect();
   },
@@ -2240,28 +2248,48 @@ const wechatView = {
     this.applyConn();
   },
   // 「离开不待机」开关
+  applyPowerPayload(m) {
+    if (!this.platform && window.fanboxEnv && window.fanboxEnv.platform) this.platform = window.fanboxEnv.platform;
+    if (!m || typeof m !== 'object') return;
+    if (typeof m.platform === 'string' && m.platform) this.platform = m.platform;
+    if (typeof m.stayAwake === 'boolean') this.stayAwake = m.stayAwake;
+    else if (typeof m.on === 'boolean') this.stayAwake = m.on;
+    if (typeof m.supported === 'boolean') this.powerSupported = m.supported;
+    if (typeof m.mode === 'string') this.powerMode = m.mode;
+  },
   async loadPower() {
     if (!window.fanboxWechat.powerState) return;
     const p = await window.fanboxWechat.powerState().catch(() => ({}));
-    this.platform = p.platform || (window.fanboxEnv && window.fanboxEnv.platform) || '';
-    this.stayAwake = !!p.stayAwake;
+    this.applyPowerPayload(p);
     this.syncAwake();
   },
   syncAwake() {
     const e = this.el(); if (!e) return;
     const btn = e.querySelector('#wx-awake'); if (!btn) return;
     const mac = (this.platform || (window.fanboxEnv && window.fanboxEnv.platform)) === 'darwin';
-    btn.classList.toggle('hidden', !mac); // 仅 macOS 支持（pmset 禁休眠）
+    btn.classList.toggle('hidden', !this.powerSupported);
     btn.classList.toggle('on', this.stayAwake);
-    btn.textContent = this.stayAwake ? '🌙 离开不待机 · 开' : '🌙 离开不待机';
-    btn.title = this.stayAwake
-      ? '已开启：微信连着时，合盖 / 息屏也不休眠，离开电脑也能远程操控。点击关闭'
-      : '开启后离开电脑也能用微信遥控：合盖 / 息屏不休眠（断开微信自动恢复）';
+    if (mac) {
+      btn.textContent = this.stayAwake ? '🌙 离开不待机 · 开' : '🌙 离开不待机';
+      btn.title = this.stayAwake
+        ? '已开启：微信连着时，合盖 / 息屏也不休眠，离开电脑也能远程操控。点击关闭'
+        : '开启后离开电脑也能用微信遥控：合盖 / 息屏不休眠（断开微信自动恢复）';
+    } else {
+      btn.textContent = this.stayAwake ? '🌙 保持唤醒 · 开' : '🌙 保持唤醒';
+      btn.title = this.stayAwake
+        ? '已开启：微信连着时保持本机唤醒，便于远程操控。点击关闭'
+        : '开启后微信连着时保持本机唤醒（断开微信自动恢复）';
+    }
   },
   async toggleAwake() {
     const r = await window.fanboxWechat.setStayAwake(!this.stayAwake).catch(() => ({}));
-    if (r && r.ok) { this.stayAwake = !!r.on; this.syncAwake(); toast(this.stayAwake ? '已开启 · 离开也能用微信遥控本机' : '已关闭 · 恢复正常休眠'); }
-    else { this.stayAwake = !!(r && r.on); this.syncAwake(); if (r && r.error && r.error !== 'cancelled' && r.error !== 'setup-cancelled') toast('开启失败：' + r.error, true); }
+    this.applyPowerPayload(r);
+    if (r && r.ok) { this.syncAwake(); toast(this.stayAwake ? '已开启 · 微信连着时保持本机唤醒' : '已关闭 · 恢复正常休眠'); }
+    else {
+      this.syncAwake();
+      if (r && r.unsupported) toast('当前平台暂不支持保持唤醒', true);
+      else if (r && r.error && r.error !== 'cancelled' && r.error !== 'setup-cancelled') toast('开启失败：' + r.error, true);
+    }
   },
   toggleMenu() { this.menuOpen ? this.closeMenu() : this.openMenu(); },
   openMenu() {

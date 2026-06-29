@@ -13,7 +13,7 @@
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
     "check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\"",
-    "test:platform": "node scripts/test-platform-shell.js && node scripts/test-platform-env.js && node scripts/test-server-platform.js",
+    "test:platform": "node scripts/test-platform-shell.js && node scripts/test-platform-env.js && node scripts/test-server-platform.js && node scripts/test-platform-power.js && node scripts/test-platform-clipboard.js",
     "predist": "npm run check:vendor-patch",
     "predist:win": "npm run check:vendor-patch",
     "dist": "electron-builder --mac",

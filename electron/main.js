@@ -5,11 +5,14 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session, powerSaveBlocker } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { terminalCwd } = require('../server-platform');
+const platformPower = require('./platform/power');
+const platformClipboard = require('./platform/clipboard');
+const platformScreenshot = require('./platform/screenshot');
 
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
@@ -90,7 +93,7 @@ app.whenReady().then(() => {
   // 合盖继续运行：恢复上次的开关意图；启动时把残留的禁休眠清掉（防上次崩溃没恢复），有终端跑起来再按需重新生效
   lidIntent = !!readConfig().lidStayAwake;
   wechatStayAwake = !!readConfig().wechatStayAwake;
-  if (process.platform === 'darwin') trySetDisableSleep(false);
+  cleanupPowerGuard();
   buildMenu();
   try {
     const m = Menu.getApplicationMenu();
@@ -111,44 +114,8 @@ app.whenReady().then(() => {
 });
 
 // ---------- 截图直通车：监听系统截屏落盘，新截图推给渲染层浮出直通卡 ----------
-function screenshotDir() {
-  try {
-    const out = require('child_process').execSync('defaults read com.apple.screencapture location 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (out) return out.startsWith('~') ? path.join(os.homedir(), out.slice(1)) : out;
-  } catch { /* 未自定义 → 默认桌面 */ }
-  return path.join(os.homedir(), 'Desktop');
-}
-let shotWatcher = null;
-const shotSent = new Map(); // path -> t，fs.watch 同一文件会连发多个事件，3s 内去重
 function startShotWatch() {
-  if (process.platform !== 'darwin' || shotWatcher) return;
-  const dir = screenshotDir();
-  if (!fs.existsSync(dir)) return;
-  try {
-    shotWatcher = fs.watch(dir, { persistent: false }, (evt, filename) => {
-      const name = filename ? filename.toString() : '';
-      // 截屏写盘有「.截屏xxx.png」点前缀的中间态，跳过；只认系统截屏的命名习惯
-      if (!/^(截屏|截圖|截图|Screenshot|Screen Shot|CleanShot|SCR-)/i.test(name) || !/\.(png|jpe?g)$/i.test(name)) return;
-      const fp = path.join(dir, name);
-      // 等写盘「真正完成」再通知：Retina 全屏截图有几 MB，固定等 600ms 可能文件还在写，
-      // 缩略图会拿到半截文件生成失败→裂图。改成轮询直到大小连续两次不变（最多 ~3s）。
-      const waitStable = (tries, lastSize) => {
-        fs.stat(fp, (err, st) => {
-          if (err || !st.isFile()) return;
-          if (st.size >= 1000 && st.size === lastSize) { // 大小稳定 = 写完
-            const last = shotSent.get(fp) || 0;
-            if (Date.now() - last < 3000) return;
-            shotSent.set(fp, Date.now());
-            if (shotSent.size > 50) { const k = shotSent.keys().next().value; shotSent.delete(k); }
-            if (win && !win.isDestroyed()) win.webContents.send('shot:new', { path: fp, name, size: st.size });
-            return;
-          }
-          if (tries > 0) setTimeout(() => waitStable(tries - 1, st.size), 250); // 还在涨，再等
-        });
-      };
-      setTimeout(() => waitStable(12, -1), 350);
-    });
-  } catch { /* 无权限等，静默放弃 */ }
+  return platformScreenshot.startShotWatch({ platform: process.platform, winProvider: () => win });
 }
 
 // ---------- 更新检测：查 GitHub Releases，有新版本通知渲染层引导下载 ----------
@@ -245,11 +212,9 @@ function uiLang() {
 }
 const M = (zh, en) => (uiLang() === 'zh' ? zh : en);
 
-// ---------- 合盖继续运行（禁用合盖休眠）----------
-// macOS 的「合盖休眠」是独立机制，caffeinate / powerSaveBlocker 这类 power assertion 都挡不住，
-// 唯一手段是 `pmset -a disablesleep 1`（需 root）。为避免智能模式反复弹密码，首次开启时装一条
-// 仅限 pmset disablesleep 0/1 的 sudoers 免密规则，之后静默切换。
-// 智能模式：只有「开关开 且 有终端在跑」才真正禁休眠；终端全退/退出 app 立即恢复，绝不让 Mac 一直不睡。
+// ---------- 合盖继续运行 / 保持唤醒 ----------
+// 平台细节集中在 electron/platform/power.js。main.js 只保留用户意图、连接状态和菜单/IPC 编排。
+// 智能模式：只有「开关开 且 有终端在跑」或「微信开关开 且 已连接」才真正保持唤醒。
 const CONFIG = path.join(os.homedir(), '.fanbox', 'config.json');
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG, 'utf8')); } catch { return {}; } }
 function writeConfig(patch) {
@@ -261,64 +226,68 @@ let lidActive = false; // 当前是否已对系统下达禁休眠
 let wechatStayAwake = false; // 「离开不待机」开关（微信 ClawBot 面板），跨会话持久
 let wechatConnected = false; // 微信 ClawBot 当前是否连着（bridge 回调更新）
 
-// 用 sudo -n（非交互）切换；sudoers 没装好就直接失败、绝不在后台弹密码
+function powerContext(extra = {}) {
+  return {
+    platform: process.platform,
+    powerSaveBlocker,
+    app,
+    lidIntent,
+    terminalsSize: terminals.size,
+    wechatStayAwake,
+    wechatConnected,
+    active: lidActive,
+    ...extra,
+  };
+}
+
+function powerStatePayload() {
+  return { ...platformPower.powerState(powerContext({ stayAwake: wechatStayAwake })), connected: wechatConnected };
+}
+
+function sendPowerState() {
+  if (win && !win.isDestroyed()) win.webContents.send('wechat:power', powerStatePayload());
+}
+
+// macOS 切换实现由 platform adapter 持有；这里保留旧函数名，减少调用点改动。
 function trySetDisableSleep(on) {
-  if (process.platform !== 'darwin') return false;
-  // stdio 全静音：免密规则没装时 `sudo -n` 会往 stderr 喷「a password is required」，无害但会误导
-  try { require('child_process').execFileSync('/usr/bin/sudo', ['-n', 'pmset', '-a', 'disablesleep', on ? '1' : '0'], { stdio: 'ignore' }); return true; }
-  catch { return false; }
+  return platformPower.trySetDisableSleep(on, powerContext());
 }
 
-// 首次开启时弹一次系统管理员框，装仅限本用户、仅限 pmset disablesleep 0/1 的免密规则
+// 首次开启时需要的 macOS 管理员确认由 adapter 处理。
 function installSudoers() {
-  return new Promise((resolve) => {
-    const user = (os.userInfo().username || '').replace(/[^a-zA-Z0-9._-]/g, '');
-    if (!user) return resolve(false);
-    const sh = [
-      '#!/bin/sh', 'set -e',
-      'f=/etc/sudoers.d/fanbox-pmset',
-      "cat > \"$f\" <<'EOF'",
-      `${user} ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1`,
-      'EOF',
-      'chown root:wheel "$f"',
-      'chmod 440 "$f"',
-      '/usr/sbin/visudo -cf "$f" || { rm -f "$f"; exit 1; }',
-      '',
-    ].join('\n');
-    let tmp;
-    try { tmp = path.join(app.getPath('temp'), 'fanbox-sudoers-install.sh'); fs.writeFileSync(tmp, sh, { mode: 0o700 }); }
-    catch { return resolve(false); }
-    const apple = `do shell script "/bin/sh " & quoted form of "${tmp}" with administrator privileges`;
-    console.log('[lid] running osascript admin prompt, tmp =', tmp);
-    require('child_process').execFile('/usr/bin/osascript', ['-e', apple], (err, stdout, stderr) => {
-      console.log('[lid] osascript done. err =', err && err.message, '| stderr =', stderr);
-      try { fs.unlinkSync(tmp); } catch { /* */ }
-      resolve(!err); // 用户取消 → err（-128）→ false
-    });
-  });
+  return platformPower.installSudoers(powerContext());
 }
 
-// 确保 pmset 免密规则就位（探针：设 0 无害；不行就装一次规则）。两个开关共用。
+// 两个开关共用同一个 macOS 准备流程。
 async function ensurePmsetRule() {
-  if (process.platform !== 'darwin') return false;
-  if (trySetDisableSleep(false)) return true; // 已有免密规则
-  return installSudoers();
+  return platformPower.ensurePmsetRule(powerContext());
+}
+
+function cleanupPowerGuard() {
+  const ok = platformPower.cleanupPowerGuard(powerContext());
+  lidActive = false;
+  return ok;
 }
 
 // 按「意图 × 触发条件」结算系统状态，幂等。终端起落、微信连断、开关变化都调它。
 //  两条独立诉求 OR 起来：① 合盖继续跑（要有终端在跑）② 离开不待机（微信连着就保持唤醒，断开自动恢复）
 function refreshLidGuard() {
-  if (process.platform !== 'darwin') return;
-  const want = (lidIntent && terminals.size > 0) || (wechatStayAwake && wechatConnected);
-  if (want === lidActive) return;
-  const ok = trySetDisableSleep(want);
-  if (want && !ok) { // 免密规则丢了，两个开关都退回关闭，别让用户以为还护着
+  const r = platformPower.refreshPowerGuard(powerContext());
+  if (r.unsupported) {
+    lidActive = false;
+    buildMenu();
+    return r;
+  }
+  if (r.want && !r.ok) { // 免密规则/电源 blocker 失败，两个开关都退回关闭，别让用户以为还护着
     lidIntent = false; wechatStayAwake = false;
     writeConfig({ lidStayAwake: false, wechatStayAwake: false });
-    if (win && !win.isDestroyed()) win.webContents.send('wechat:power', { stayAwake: false, active: false });
+    lidActive = false;
+    sendPowerState();
+  } else {
+    lidActive = !!r.active;
   }
-  lidActive = want && ok;
   buildMenu();
+  return r;
 }
 
 // 菜单勾选/取消的入口
@@ -408,13 +377,13 @@ app.on('before-quit', (e) => {
 app.on('window-all-closed', () => {
   terminals.forEach((p) => { try { p.kill(); } catch { /* */ } });
   terminals.clear();
-  if (lidActive) { trySetDisableSleep(false); lidActive = false; } // 终端没了，别让 Mac 一直不睡
+  if (lidActive) cleanupPowerGuard(); // 终端没了，别让系统一直不睡
   recorders.forEach((r) => { try { r.stream.end(); } catch { /* */ } }); // 收尾刷盘，别丢最后几行
   recorders.clear();
   if (process.platform !== 'darwin') app.quit();
 });
 // 退出兜底：无论怎么退（⌘Q、崩溃前的正常退出），都恢复系统休眠，绝不留禁休眠的烂摊子
-app.on('will-quit', () => { if (process.platform === 'darwin') trySetDisableSleep(false); });
+app.on('will-quit', () => { cleanupPowerGuard(); });
 
 // ---------- 终端录制（黑匣子）：把 PTY 字节流旁路成 asciinema v2 .cast ----------
 // 设计铁律：录制器是一根哑管子——只异步旁路字节，全程 try/catch，写失败就静默自废，
@@ -515,14 +484,9 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
 });
 // ---------- 剪贴板：复制图片本体 / 复制文件（访达可粘贴）----------
 ipcMain.handle('clip:image', (e, { path: p }) => {
-  try { const img = nativeImage.createFromPath(p); if (img.isEmpty()) return { ok: false, error: '不是可读图片' }; clipboard.writeImage(img); return { ok: true }; }
-  catch (err) { return { ok: false, error: err.message }; }
+  return platformClipboard.copyImage(p, { nativeImage, clipboard });
 });
-ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
-  const { execFile } = require('child_process');
-  // argv 传路径，避免拼进 AppleScript 字面量被注入
-  execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
-}));
+ipcMain.handle('clip:file', (e, { path: p }) => platformClipboard.copyFile(p, { platform: process.platform, clipboard }));
 
 // 拖拽落盘：file-promise 类拖入（截图浮窗等）没有真实路径，把字节写进临时目录换路径
 ipcMain.handle('drop:save', (e, { name, buf }) => {
@@ -768,8 +732,9 @@ ipcMain.handle('wechat:check', async () => { ensureWechat(); return wechatBridge
 // 「离开不待机」开关：开启时（首次需管理员密码装免密规则）+ 微信连着 → 禁休眠，息屏/合盖也能远程操控
 ipcMain.handle('wechat:setStayAwake', async (e, { on } = {}) => {
   ensureWechat();
-  if (process.platform !== 'darwin') return { ok: false, error: 'macOS only' };
-  if (on) {
+  const state = powerStatePayload();
+  if (!state.supported) return { ...state, ok: false, on: wechatStayAwake };
+  if (process.platform === 'darwin' && on) {
     const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
       type: 'warning', buttons: [M('开启', 'Enable'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
       message: M('离开电脑也能用微信遥控', 'Keep controllable via WeChat while away'),
@@ -783,10 +748,11 @@ ipcMain.handle('wechat:setStayAwake', async (e, { on } = {}) => {
   wechatStayAwake = !!on;
   writeConfig({ wechatStayAwake });
   try { wechatConnected = wechatBridge.isConnected(); } catch { /* */ }
-  refreshLidGuard();
-  return { ok: true, on: wechatStayAwake, active: lidActive, connected: wechatConnected };
+  const r = refreshLidGuard();
+  const ok = !(r && r.want && !r.ok);
+  return { ...powerStatePayload(), ok, on: wechatStayAwake, active: lidActive, connected: wechatConnected, error: ok ? undefined : 'setup-cancelled' };
 });
-ipcMain.handle('wechat:powerState', () => ({ ok: true, stayAwake: wechatStayAwake, active: lidActive, platform: process.platform }));
+ipcMain.handle('wechat:powerState', () => powerStatePayload());
 
 // ---------- 文件监听（agent 改文件 → 自动刷新 + 跨项目变更收件箱）----------
 // 多目录监听：浏览目录 + 每个终端会话所在的项目目录。一下午开多个项目跑 agent 时，
