@@ -180,6 +180,89 @@ spawn('cmd.exe', ['/d', '/s', '/c', '""C:\\path\\tool.cmd" "arg with spaces""'],
 
 ---
 
+## Scenario: Server System Command Adapter Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to disk usage, archive preview, thumbnails, HEIC transcoding, file opening, terminal cwd lookup, backend command detection, or Spotlight / content search.
+- These OS-specific backend capabilities belong in `server-platform.js`, not directly in `server.js` or `electron/main.js`.
+- Keep the adapter zero-runtime-dependency and Node-built-in/system-command only.
+
+### 2. Signatures
+
+- `diskUsage(dir, deps) -> Promise<{ ok, dir?, total?, items?, more?, partial?, error? }>`
+- `archiveList(file, deps) -> Promise<{ ok, entries?, truncated?, unsupported?, error? }>`
+- `generateThumb(src, ext, size, cacheFile, isImg, deps) -> Promise<void>`
+- `transcodeHeic(src, cacheFile, deps) -> Promise<void>`
+- `openInOS(target, withApp, deps) -> Promise<{ ok, with?, error? }>`
+- `commandExists(bin, deps) -> Promise<boolean>`
+- `terminalCwd(pid, deps) -> Promise<string|null>`
+- `contentSearch(query, rootPath, deps) -> Promise<{ results, truncated?, engine? }>`
+- `findByName(name, deps) -> Promise<string[]>`
+
+`deps` is the boundary for server-owned helpers such as `resolvePath`, `grepFiles`, and `kindOf`; do not import `server.js` from the adapter.
+
+### 3. Contracts
+
+- `server.js` owns HTTP routing, `resolvePath` entry validation, thumbnail cache response streaming, and API response shape.
+- `server-platform.js` owns platform switches and direct system command calls (`du`, `unzip`, `tar`, `gzip`, `sips`, `qlmanage`, `mdfind`, `lsof`, `open`, `start`, `xdg-open`).
+- macOS branches preserve the existing system-command behavior when moved into the adapter.
+- Windows branches must either provide an equivalent Node/system implementation or return a clear degraded result (`unsupported`, `null`, or a thrown thumbnail/transcode error that the existing caller maps to 415).
+- Zip preview must keep the central-directory reader and UTF-8/GBK filename decoding before any system fallback.
+
+### 4. Validation & Error Matrix
+
+- Windows large directory traversal exceeds budget -> return partial results with `partial: true`, not a hung request.
+- Unsupported archive format on Windows -> `{ ok:false, unsupported:true, error:"Windows 暂不支持预览该压缩格式" }`.
+- Thumbnail or HEIC generation unsupported -> throw a Chinese user-facing error; `serveThumb` / `serveHeicAsJpeg` converts it to the existing 415 response.
+- Windows terminal cwd unavailable -> `terminalCwd()` returns `null`; IPC callers return `{ ok:false }` and UI falls back.
+- `mdfind` unavailable or empty on macOS -> call `grepFiles()` and return `engine:"grep"`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `server.js` has a thin `contentSearch()` wrapper that calls `serverPlatform.contentSearch(query, root, { resolvePath, grepFiles, kindOf })`.
+- Good: `electron/main.js` calls `terminalCwd(pid)` and keeps the existing `{ ok:true,cwd }` / `{ ok:false }` IPC shape.
+- Base: `server-platform.js` may contain direct system commands; review grep should find them there.
+- Bad: `server.js` directly calls `execFile('sips')`, `execFile('mdfind')`, `execFile('unzip')`, `execFile('du')`, or embeds `lsof -a` logic again.
+
+### 6. Tests Required
+
+- Syntax: `node --check server-platform.js server.js electron/main.js`.
+- Unit-style platform tests: `npm run test:platform` must include `scripts/test-server-platform.js`.
+- Repo gates: `just check` and `just test`.
+- Review grep: `rg -n "du -sk|execFile\\('mdfind'|execFile\\('sips'|execFile\\('qlmanage'|execFile\\('unzip'|lsof -a" server.js electron\main.js` should not match.
+- Smoke when possible: hit `/api/du`, `/api/archive`, `/api/content`, and `/api/thumb` on a temporary local server.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+async function contentSearch(query, rootPath) {
+  const paths = await mdfind(['-onlyin', rootPath, query]);
+  return paths.length ? { results: paths } : grepFiles(query, rootPath);
+}
+```
+
+This keeps a macOS-only command in `server.js` and makes future Windows work scatter across the business file.
+
+#### Correct
+
+```js
+async function contentSearch(query, rootPath) {
+  return serverPlatform.contentSearch(query, rootPath, {
+    platform: process.platform,
+    resolvePath,
+    grepFiles,
+    kindOf,
+  });
+}
+```
+
+Keep HTTP/API ownership in `server.js`, but put platform branching and system commands in `server-platform.js`.
+
+---
+
 ## Testing Requirements
 
 **No formal test framework.** The project still does not use Jest/Vitest or a lint framework. Use the real repo gates that exist, not invented test commands:
