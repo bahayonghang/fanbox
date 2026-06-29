@@ -73,3 +73,37 @@ Implemented Windows packaging and CI entrypoints, added cross-platform just reci
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: C3 system command adapter
+
+**Date**: 2026-06-29
+**Task**: C3 system command adapter
+**Branch**: `win`
+
+### Summary
+
+Implemented server-platform adapter for disk/archive/thumb/open/search/terminal cwd, added C3 platform tests and backend adapter spec, then archived win-syscmd-adapter.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2053128` | (see git log) |
+| `ad746e9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
