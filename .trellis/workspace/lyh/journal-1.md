@@ -107,3 +107,37 @@ Implemented server-platform adapter for disk/archive/thumb/open/search/terminal 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: C4 macOS 专属能力 Windows 化
+
+**Date**: 2026-06-29
+**Task**: C4 macOS 专属能力 Windows 化
+**Branch**: `win`
+
+### Summary
+
+实现 Electron C4 平台能力适配：抽出 power/clipboard/screenshot adapter，Windows 使用 powerSaveBlocker 和路径文本剪贴板降级，非 macOS 截图结构化 unsupported；补齐 C4 design/implement 和 backend code-spec；已通过 node --check、npm run test:platform、just check、just test、npm run check:vendor-patch、git diff --check。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ee6713b` | (see git log) |
+| `f907920` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
