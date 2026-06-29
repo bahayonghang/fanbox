@@ -187,10 +187,38 @@ Open `http://localhost:4567`. Zero dependencies, zero build — clone and run. T
 ```bash
 npm install
 npm run app          # electron . 启动完整桌面版 / full desktop app
+just check           # 当前静态检查 / current local checks
+just ci              # 按当前平台跑检查 + 打包 / checks + platform build
 npm run dist         # 打包签名 .dmg（产物在 dist/，不入 git）/ build & sign the .dmg (output in dist/)
+npm run dist:win     # Windows 安装包 + zip（社区移植维护）/ Windows installer + zip (community port maintenance)
 ```
 
 > 打包遇到 Electron 下载被墙：`ELECTRON_MIRROR="https://registry.npmmirror.com/-/binary/electron/" npm run dist`
+
+### Windows fork maintenance
+
+This fork keeps Windows work on the `win` branch. Use the repo-level `justfile` so local builds and CI run the same gates:
+
+```bash
+just check
+just build-win
+just ci
+```
+
+`just build-win` runs the native `node-pty` rebuild before `npm run dist:win`. GitHub Actions currently uses `windows-2022` because Electron/node-gyp does not recognize the VS 2026 toolchain yet.
+
+Keep the fork synced with upstream:
+
+```bash
+git fetch upstream
+git rebase upstream/master
+```
+
+Enable rerere locally so repeated upstream rebase conflicts are remembered:
+
+```bash
+git config rerere.enabled true
+```
 
 ## Shortcuts · 快捷键
 
@@ -259,7 +287,7 @@ Every frontend dependency is vendored locally (`public/vendor/`) — that's what
 | 桌面壳 / Desktop shell | Electron 33 + node-pty（asarUnpack 原生模块）<br>Electron 33 + node-pty (asarUnpack native module) |
 | 终端 / Terminal | xterm.js + WebGL + unicode11 |
 | 编辑器 / Editors | Monaco（代码）+ Milkdown Crepe（Markdown）<br>Monaco (code) + Milkdown Crepe (Markdown) |
-| 打包 / Packaging | electron-builder → 签名 arm64 .dmg<br>electron-builder → signed arm64 .dmg |
+| 打包 / Packaging | electron-builder → 签名 arm64 .dmg / Windows nsis + zip<br>electron-builder → signed arm64 .dmg / Windows nsis + zip |
 
 <details>
 <summary>项目结构 / Project layout</summary>

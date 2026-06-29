@@ -36,6 +36,70 @@
 - ✅ `'use strict';` 在每个 JS 文件顶部（`server.js:8`、`electron/preload.js:4` 上半部、`public/app.js:2`）——沿用。
 - ✅ 中英文混排注释：注释是中文口语（人话），代码标识符是英文，二者间留空格。
 
+## Scenario: Windows Packaging And CI Command Contract
+
+### 1. Scope / Trigger
+
+- Trigger: packaging or CI work that changes `package.json`, `justfile`, `.github/workflows/*`, or tracked build resources.
+- Keep this as command orchestration only. Do not add backend runtime dependencies or split `server.js` for build convenience.
+
+### 2. Signatures
+
+- `npm run check:vendor-patch`: Node-based check for the patched xterm IME key path. It must run on both Windows and macOS.
+- `npm run predist` and `npm run predist:win`: both delegate to `npm run check:vendor-patch`.
+- `npm run dist`: macOS package entry, remains `electron-builder --mac`.
+- `npm run dist:win`: Windows package entry, remains `electron-builder --win`.
+- `just check`, `just test`, `just build`, `just build-mac`, `just build-win`, `just ci`: repo-level cross-platform gates.
+
+### 3. Contracts
+
+- `build.win.icon` points to tracked `build/icon.ico`; `.gitignore` must explicitly allow it.
+- `build.win.target` produces both `nsis` and `zip` artifacts.
+- `just build-win` runs `npm run rebuild` before `npm run dist:win` so `node-pty` is rebuilt for Electron.
+- Windows CI calls `npm ci` and then `just ci`; CI must not duplicate a separate hand-written build sequence.
+- Pin Windows CI to `windows-2022` while the current Electron/node-gyp toolchain rejects Visual Studio 2026 / VS 18.
+
+### 4. Validation & Error Matrix
+
+- xterm patch missing -> `npm run check:vendor-patch` fails before packaging.
+- Invalid `package.json` -> `just check` fails during JSON parse.
+- Missing or ignored `build/icon.ico` -> Windows package config is incomplete; fix `.gitignore` and the icon asset before CI.
+- `npm run rebuild` fails on VS 2026 with `unknown version "undefined"` -> use `windows-2022` CI or install VS 2022 Build Tools locally; do not paper over this by changing runtime code.
+- macOS `dist` no longer equals `electron-builder --mac` -> packaging regression.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `just ci` is the single CI entry and dispatches to the platform build recipe.
+- Base: `just check` and `just test` pass even while no formal test framework exists.
+- Bad: CI runs `npm run dist:win` directly without `npm run rebuild`, or uses `windows-latest` before the native rebuild toolchain supports VS 18.
+
+### 6. Tests Required
+
+- `just --list` shows all expected recipes.
+- `just check` and `just test` pass on the current platform.
+- `just --dry-run build` shows the platform-specific build sequence.
+- A Node config probe confirms `dist`, `dist:win`, `build.mac`, `build.dmg`, and `build.win`.
+- `git check-ignore -v build/icon.ico` confirms the icon is whitelisted.
+- GitHub Actions on `windows-2022` must upload `dist/*.exe` and `dist/*.zip` for final Windows artifact proof.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+"check:vendor-patch": "grep -q '20===e.keyCode||229===e.keyCode' public/vendor/xterm/xterm.js"
+```
+
+`grep` is not a stable Windows command in this repo's npm scripts.
+
+#### Correct
+
+```json
+"check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\""
+```
+
+Use Node for cross-platform npm script checks, and let `just` orchestrate platform-specific build steps.
+
 ---
 
 ## Testing Requirements
