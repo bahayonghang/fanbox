@@ -39,3 +39,37 @@ Implemented Windows packaging and CI entrypoints, added cross-platform just reci
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 完成 Windows agent P0 平台层
+
+**Date**: 2026-06-29
+**Task**: 完成 Windows agent P0 平台层
+**Branch**: `win`
+
+### Summary
+
+实现 Windows shell/env platform adapter，改造 Claude/Codex argv 直传，补齐 C2 设计、执行记录和 backend code-spec，并通过平台测试与 Windows smoke。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `317576b` | (see git log) |
+| `a3b221f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
