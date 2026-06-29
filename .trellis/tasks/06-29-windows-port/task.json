@@ -1,0 +1,33 @@
+{
+  "id": "windows-port",
+  "name": "windows-port",
+  "title": "FanBox Windows 移植",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lyh",
+  "assignee": "lyh",
+  "createdAt": "2026-06-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "win",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-29-win-build-ci",
+    "06-29-win-platform-p0",
+    "06-29-win-syscmd-adapter",
+    "06-29-win-macos-parity",
+    "06-29-win-update-channel",
+    "06-29-win-longterm"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
