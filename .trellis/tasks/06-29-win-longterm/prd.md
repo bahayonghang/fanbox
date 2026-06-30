@@ -39,3 +39,9 @@
 ## Notes
 
 阶段一/二完成后再逐项激活。ConPTY 冒烟（L1 基础部分）可在 C2 顺带覆盖。
+
+## 路线拆分记录（2026-06-30）
+
+- L1 基础部分已拆为 `06-30-win-conpty-smoke` 并归档：Windows ConPTY 自动冒烟覆盖 PowerShell、cmd、可选 Git Bash 与 agent launch 静态契约。
+- L3 已拆为 `06-30-06-30-win-release-versioning` 并归档：Windows release tag / wizard / update 通道版本策略已落地。
+- L2 签名/SmartScreen、L4 上游 PR 与 L5 中未成熟项不阻塞父任务 MVP 集成评审；后续实施时按启动门拆独立任务。

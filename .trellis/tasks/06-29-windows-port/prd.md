@@ -75,10 +75,17 @@
 
 ## 跨子任务验收（父任务集成评审）
 
-- [ ] PAC1：任一业务文件不再直接拼 `/bin/zsh`/`/bin/sh`/`du`/`lsof`/`sips`/`qlmanage`/`osascript`/`scutil`/`command -v`；全部经平台 adapter。
-- [ ] PAC2：macOS 端全量功能无回归（adapter 的 darwin 分支保持原实现）。
-- [ ] PAC3：阶段一三个 P0（打包、env/proxy、agent shell runner）全部清零。
-- [ ] PAC4：一次 `git rebase upstream/master` 演练，冲突集中在少数 adapter 调用点而非穿透 `server.js`/`main.js`。
+- [x] PAC1：任一业务文件不再直接拼 `/bin/zsh`/`/bin/sh`/`du`/`lsof`/`sips`/`qlmanage`/`osascript`/`scutil`/`command -v`；全部经平台 adapter。
+- [x] PAC2：macOS 端全量功能无回归（adapter 的 darwin 分支保持原实现）。
+- [x] PAC3：阶段一三个 P0（打包、env/proxy、agent shell runner）全部清零。
+- [x] PAC4：一次 `git rebase upstream/master` 演练，冲突集中在少数 adapter 调用点而非穿透 `server.js`/`main.js`。
+
+### 集成评审证据（2026-06-30）
+
+- PAC1：`rg -n "du -sk|execFile\\('mdfind'|execFile\\('sips'|execFile\\('qlmanage'|execFile\\('unzip'|lsof -a|osascript|scutil --proxy|/bin/zsh|/bin/sh|command -v" server.js electron\main.js electron\wechat -g '!node_modules'` 无命中；剩余系统命令位于 `server-platform.js`、`electron/platform/*` 或测试。
+- PAC2：`node --check server-platform.js server.js electron\platform\shell.js electron\main.js scripts\test-platform-shell.js scripts\test-server-platform.js`、`just check`、`just test` 通过；adapter 的 darwin 分支保留原 macOS 命令路径。
+- PAC3：C1/C2/C3/C4/C5 均已归档；`package.json` 已有 `dist:win`/`win.target`，`electron/platform/{env,shell}` 接管 GUI env/proxy 与 agent argv spawn，系统命令/更新通道均经 adapter。
+- PAC4：`git fetch upstream master` 后在临时分支 `rehearsal/windows-port-pac4-20260630160018` 执行 `git rebase upstream/master`，结果为 `Current branch ... is up to date.`；`git merge-base --is-ancestor upstream/master HEAD` 返回成功，未产生冲突。
 
 ## 后续规划说明
 
