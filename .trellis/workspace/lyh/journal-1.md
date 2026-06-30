@@ -141,3 +141,37 @@ Implemented server-platform adapter for disk/archive/thumb/open/search/terminal 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: C5 更新通道拆分
+
+**Date**: 2026-06-30
+**Task**: C5 更新通道拆分
+**Branch**: `win`
+
+### Summary
+
+拆分 Electron 更新检查为上游源码与 Windows 包通道；Windows 下载只接受 .exe/.zip asset，macOS 保持 upstream 行为；补齐平台测试与 Trellis 更新通道契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7148b6` | (see git log) |
+| `cd9ba87` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
