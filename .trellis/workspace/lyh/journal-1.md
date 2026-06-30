@@ -209,3 +209,37 @@ Implemented Windows package release suffix handling, release wizard channel sele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Windows ConPTY smoke matrix
+
+**Date**: 2026-06-30
+**Task**: Windows ConPTY smoke matrix
+**Branch**: `win`
+
+### Summary
+
+Added a Windows node-pty/ConPTY smoke script for PowerShell, cmd, optional Git Bash, and static Claude/Codex launcher command contracts; wired it into test:platform and documented the Windows node-pty smoke-test cleanup contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a7a981f` | (see git log) |
+| `150dc0c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~211 | Active |
+| `journal-1.md` | ~245 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-06-30 | Windows ConPTY smoke matrix | `a7a981f`, `150dc0c` | `win` |
 | 6 | 2026-06-30 | C6 Windows release versioning | `b9b1a3a`, `cbfa19b` | `win` |
 | 5 | 2026-06-30 | C5 更新通道拆分 | `b7148b6`, `cd9ba87` | `win` |
 | 4 | 2026-06-29 | C4 macOS 专属能力 Windows 化 | `ee6713b`, `f907920` | `win` |
