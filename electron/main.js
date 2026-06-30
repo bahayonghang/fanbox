@@ -5,7 +5,7 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, session, powerSaveBlocker, net } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -13,6 +13,7 @@ const { terminalCwd } = require('../server-platform');
 const platformPower = require('./platform/power');
 const platformClipboard = require('./platform/clipboard');
 const platformScreenshot = require('./platform/screenshot');
+const platformUpdate = require('./platform/update');
 
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
@@ -121,39 +122,37 @@ function startShotWatch() {
 // ---------- 更新检测：查 GitHub Releases，有新版本通知渲染层引导下载 ----------
 // 现阶段只做「检测 + 引导」：Apple Development 签名过不了 Squirrel.Mac 的校验，
 // electron-updater 全自动更新要等升级 Developer ID 后再换
-function cmpVer(a, b) {
-  const pa = String(a).replace(/^v/, '').split('.').map(Number);
-  const pb = String(b).replace(/^v/, '').split('.').map(Number);
-  for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
-  return 0;
-}
-const REL_PAGE = 'https://github.com/alchaincyf/fanbox/releases/latest';
-async function fetchLatestRelease() {
-  // 先走 API（信息全）；代理共享出口 IP 很容易吃 GitHub API 的未认证限流（60 次/小时/IP，403），
-  // 失败就退回抓 releases/latest 网页重定向——重定向后的 URL 自带 tag，且不占 API 配额
-  try {
-    const res = await net.fetch('https://api.github.com/repos/alchaincyf/fanbox/releases/latest', {
-      headers: { 'User-Agent': 'fanbox-app', Accept: 'application/vnd.github+json' },
-    });
-    if (res.ok) {
-      const rel = await res.json();
-      if (rel.tag_name) return { tag: rel.tag_name, url: rel.html_url || REL_PAGE };
-    }
-  } catch { /* 走兜底 */ }
-  const res = await net.fetch(REL_PAGE, { headers: { 'User-Agent': 'fanbox-app' } });
-  const m = String(res.url || '').match(/\/releases\/tag\/([^/?#]+)/);
-  if (m) return { tag: decodeURIComponent(m[1]), url: res.url };
-  return null;
-}
 let pendingUpdate = null; // 渲染层晚注册监听也能拉到（启动 6 秒的推送 vs init 加载大目录，谁先谁后说不准）
 let updRetry = 0;
 let lastAutoCheck = 0;
+function updatePayload(info, secondary) {
+  if (!info) return null;
+  const isRelease = info.kind === 'release';
+  const payload = {
+    kind: info.kind,
+    version: info.version || String(info.tag || '').replace(/^v/i, ''),
+    url: info.url,
+    repo: info.repo,
+    assetName: info.assetName || null,
+    title: isRelease ? 'Windows 包' : '上游源码',
+    action: isRelease ? '下载安装包' : '查看源码版本',
+  };
+  if (secondary) payload.secondary = updatePayload(secondary);
+  return payload;
+}
 async function checkUpdate(opts) {
   const manual = !!(opts && opts.manual);
   if (!manual) lastAutoCheck = Date.now();
-  let info = null;
-  try { info = await fetchLatestRelease(); } catch { info = null; }
-  if (!info) {
+  let result = null;
+  try {
+    result = await platformUpdate.checkUpdates({
+      net,
+      env: process.env,
+      platform: process.platform,
+      currentVersion: app.getVersion(),
+    });
+  } catch { result = null; }
+  if (!result || !result.checked) {
     if (manual) {
       dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
         type: 'warning', buttons: [M('好', 'OK')], message: M('检查更新失败', 'Update check failed'),
@@ -163,24 +162,38 @@ async function checkUpdate(opts) {
     return;
   }
   updRetry = 0;
-  const newer = cmpVer(info.tag, app.getVersion()) > 0;
+  const newer = !!result.primary;
   if (newer) {
-    pendingUpdate = { version: info.tag.replace(/^v/, ''), url: info.url };
+    const secondary = result.primary === result.release ? result.upstream : null;
+    pendingUpdate = updatePayload(result.primary, secondary);
     if (win && !win.isDestroyed()) win.webContents.send('update:available', pendingUpdate);
   }
   if (manual) {
     const owner = win && !win.isDestroyed() ? win : undefined;
     if (newer) {
+      const isRelease = pendingUpdate.kind === 'release';
+      const secondary = pendingUpdate.secondary || null;
+      const buttons = secondary
+        ? [M(pendingUpdate.action, isRelease ? 'Download' : 'View'), M(secondary.action, 'View'), M('取消', 'Cancel')]
+        : [M(pendingUpdate.action, isRelease ? 'Download' : 'View'), M('取消', 'Cancel')];
+      const secondaryDetail = secondary
+        ? M(`\n另外发现${secondary.title} v${secondary.version}，可单独查看，不和 Windows 安装包混淆。`, `\nAlso found ${secondary.kind === 'source' ? 'upstream source' : 'Windows package'} v${secondary.version}; it is tracked separately.`)
+        : '';
       const c = dialog.showMessageBoxSync(owner, {
-        type: 'info', buttons: [M('去下载', 'Download'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
-        message: M(`发现新版本 v${pendingUpdate.version}`, `New version v${pendingUpdate.version} available`),
-        detail: M(`当前版本 v${app.getVersion()}。点「去下载」打开发布页，下载后替换 /Applications 里的旧版即可。`, `You are on v${app.getVersion()}. "Download" opens the release page; replace the old app in /Applications.`),
+        type: 'info', buttons, defaultId: 0, cancelId: buttons.length - 1,
+        message: M(`发现${pendingUpdate.title} v${pendingUpdate.version}`, `${isRelease ? 'Windows package' : 'Upstream source'} v${pendingUpdate.version} available`),
+        detail: isRelease
+          ? M(`当前版本 v${app.getVersion()}。点「下载安装包」打开 Windows 发布产物。${secondaryDetail}`, `You are on v${app.getVersion()}. "Download" opens the Windows package asset.${secondaryDetail}`)
+          : M(`当前版本 v${app.getVersion()}。点「查看源码版本」打开上游 release；Windows 安装包不受这个提示影响。${secondaryDetail}`, `You are on v${app.getVersion()}. "View" opens the upstream release; Windows package updates are tracked separately.${secondaryDetail}`),
       });
       if (c === 0) shell.openExternal(pendingUpdate.url);
+      else if (secondary && c === 1) shell.openExternal(secondary.url);
     } else {
       dialog.showMessageBoxSync(owner, {
         type: 'info', buttons: [M('好', 'OK')], message: M('已是最新版本', 'You are up to date'),
-        detail: M(`当前版本 v${app.getVersion()} 就是最新发布版。`, `v${app.getVersion()} is the latest release.`),
+        detail: process.platform === 'win32'
+          ? M(`当前版本 v${app.getVersion()} 没有更新的 Windows 包或上游源码提示。`, `v${app.getVersion()} has no newer Windows package or upstream source update.`)
+          : M(`当前版本 v${app.getVersion()} 就是最新发布版。`, `v${app.getVersion()} is the latest release.`),
       });
     }
   }

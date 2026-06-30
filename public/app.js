@@ -4662,14 +4662,28 @@ async function init() {
 // 新版本提示：主进程查到 GitHub 有新 Release 时右下角弹胶囊，引导去下载页（不强更不打扰）
 function bindUpdateNotice() {
   if (!window.fanboxUpdate) return;
-  const show = ({ version, url }) => {
-    if (localStorage.getItem('fb_skip_ver') === version || document.querySelector('.update-pill')) return;
+  const show = (m) => {
+    if (!m || !m.version || !m.url) return;
+    const kind = m.kind || 'release';
+    const skipKey = `${kind}:${m.version}`;
+    if (localStorage.getItem('fb_skip_ver') === skipKey || localStorage.getItem('fb_skip_ver') === m.version || document.querySelector('.update-pill')) return;
+    const isSource = kind === 'source';
+    const label = isSource
+      ? `上游源码 v${m.version} 已发布，建议同步源码`
+      : `Windows 包 v${m.version} 已发布，建议下载安装包`;
+    const action = m.action || (isSource ? '查看源码版本' : '下载安装包');
+    const secondary = m.secondary && m.secondary.version && m.secondary.url ? m.secondary : null;
+    const secondaryHtml = secondary
+      ? `<span class="up-secondary">另有${escapeHtml(secondary.title || '上游源码')} v${escapeHtml(secondary.version)}</span><button class="up-alt">${escapeHtml(secondary.action || '查看')}</button>`
+      : '';
     const bar = document.createElement('div');
     bar.className = 'update-pill';
-    bar.innerHTML = `<span>新版本 v${escapeHtml(version)} 已发布</span><button class="up-go">去下载</button><button class="up-x" title="这个版本不再提醒">✕</button>`;
+    bar.innerHTML = `<span>${escapeHtml(label)}</span><button class="up-go">${escapeHtml(action)}</button>${secondaryHtml}<button class="up-x" title="这个版本不再提醒">✕</button>`;
     document.body.appendChild(bar);
-    bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(url); bar.remove(); };
-    bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', version); bar.remove(); };
+    bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(m.url); bar.remove(); };
+    const alt = bar.querySelector('.up-alt');
+    if (alt) alt.onclick = () => { window.fanboxUpdate.open(secondary.url); };
+    bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', skipKey); bar.remove(); };
   };
   window.fanboxUpdate.onAvailable(show);
   // 主进程启动 6 秒就推送，init 加载大目录时这里可能还没注册监听——补拉一次，错过的推送不丢
