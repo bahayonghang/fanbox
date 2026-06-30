@@ -7,7 +7,7 @@ const USER_AGENT = 'fanbox-app';
 function cmpVer(a, b) {
   const pa = versionParts(a);
   const pb = versionParts(b);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const d = (pa[i] || 0) - (pb[i] || 0);
     if (d) return d;
   }
@@ -15,9 +15,9 @@ function cmpVer(a, b) {
 }
 
 function versionParts(v) {
-  const m = String(v || '').match(/v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i);
+  const m = String(v || '').match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-win\.(\d+))?/i);
   if (!m) return [0, 0, 0];
-  return [Number(m[1]) || 0, Number(m[2]) || 0, Number(m[3]) || 0];
+  return [Number(m[1]) || 0, Number(m[2]) || 0, Number(m[3]) || 0, Number(m[4]) || 0];
 }
 
 function versionText(tag) {

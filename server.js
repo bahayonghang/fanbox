@@ -538,6 +538,32 @@ ${history || '（还没有历史记录）'}
 }
 
 // ---------- 发版向导：检查项目状态 → 改版本号/CHANGELOG → 命令序列交给内嵌终端跑（每步可见可拦）----------
+function parseReleaseVersionText(v) {
+  const m = String(v || '').trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-win\.(\d+))?$/i);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    win: m[4] ? Number(m[4]) : 0,
+  };
+}
+
+function baseReleaseVersion(info) {
+  if (!info) return '0.0.0';
+  return `${info.major}.${info.minor}.${info.patch}`;
+}
+
+function nextSourceVersion(current) {
+  const info = parseReleaseVersionText(current) || { major: 0, minor: 0, patch: 0 };
+  return `${info.major}.${info.minor}.${info.patch + 1}`;
+}
+
+function nextWinVersion(current) {
+  const info = parseReleaseVersionText(current) || { major: 0, minor: 0, patch: 0, win: 0 };
+  return `${baseReleaseVersion(info)}-win.${(info.win || 0) + 1}`;
+}
+
 async function releaseInspect(p) {
   const dir = resolvePath(p);
   const sh = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { cwd: dir, timeout: 8000 }, (err, stdout) => resolve(err ? null : String(stdout).trim())));
@@ -546,6 +572,9 @@ async function releaseInspect(p) {
   catch { return { ok: false, error: '这里没有 package.json——发版向导目前只认 node 项目' }; }
   const out = { ok: true, dir, name: pkg.name || path.basename(dir), version: pkg.version || '0.0.0' };
   out.hasDist = !!(pkg.scripts && pkg.scripts.dist);
+  out.hasWinDist = !!(pkg.scripts && pkg.scripts['dist:win']);
+  out.nextSourceVersion = nextSourceVersion(out.version);
+  out.nextWinVersion = nextWinVersion(out.version);
   out.remote = await sh('git', ['remote', 'get-url', 'origin']);
   out.branch = await sh('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
   const status = await sh('git', ['status', '--porcelain']);
@@ -564,13 +593,21 @@ async function releaseInspect(p) {
 
 async function releasePrepare(b) {
   const dir = resolvePath(b.path);
+  const channel = b.channel === 'win' ? 'win' : 'source';
   const version = String(b.version || '').trim();
-  if (!/^\d+\.\d+\.\d+/.test(version)) return { ok: false, error: '版本号格式不对（要 x.y.z）' };
+  if (channel === 'win') {
+    if (!/^\d+\.\d+\.\d+-win\.[1-9]\d*$/.test(version)) return { ok: false, error: 'Windows 包版本号要 x.y.z-win.N' };
+  } else if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    return { ok: false, error: '版本号格式不对（要 x.y.z）' };
+  }
   const notes = String(b.notes || '').trim();
   // 1) package.json 版本号
   const pkgFile = path.join(dir, 'package.json');
   let pkgRaw;
   try { pkgRaw = await fsp.readFile(pkgFile, 'utf8'); } catch { return { ok: false, error: '读不到 package.json' }; }
+  let pkg;
+  try { pkg = JSON.parse(pkgRaw); } catch { return { ok: false, error: 'package.json 格式不对' }; }
+  if (channel === 'win' && !(pkg.scripts && pkg.scripts['dist:win'])) return { ok: false, error: '这个项目没有 dist:win，不能发 Windows 包版本' };
   if (!/"version"\s*:\s*"[^"]*"/.test(pkgRaw)) return { ok: false, error: 'package.json 里没有 version 字段' };
   await fsp.writeFile(pkgFile, pkgRaw.replace(/"version"\s*:\s*"[^"]*"/, `"version": "${version}"`), 'utf8');
   // 2) CHANGELOG：Unreleased 段落升格为新版本，开新的空 Unreleased
@@ -592,10 +629,14 @@ async function releasePrepare(b) {
   const firstPlain = lines.find((l) => !/^#/.test(l));
   const title = (firstBullet || firstPlain || '').replace(/^[#\-*\s]+/, '').slice(0, 60);
   const steps = [];
-  if (b.doDist) steps.push('npm run dist');
+  const distCommand = channel === 'win' ? 'npm run dist:win' : 'npm run dist';
+  const releaseAssets = channel === 'win'
+    ? ` dist/*${version}*.exe dist/*${version}*.zip`
+    : ` dist/*${version}*.dmg`;
+  if (b.doDist) steps.push(distCommand);
   steps.push('git add -A', `git commit -m ${shellQuote(`v${version}: ${title || '发版'}`)}`);
   if (b.doPush) steps.push('git push');
-  if (b.doRelease) steps.push(`gh release create v${version} --title ${shellQuote(`v${version}${title ? ' · ' + title : ''}`)} --notes-file ${shellQuote(notesFile)}${b.doDist ? ` dist/*${version}*.dmg` : ''}`);
+  if (b.doRelease) steps.push(`gh release create v${version} --title ${shellQuote(`v${version}${title ? ' · ' + title : ''}`)} --notes-file ${shellQuote(notesFile)}${b.doDist ? releaseAssets : ''}`);
   return { ok: true, cmd: steps.join(' && ') };
 }
 

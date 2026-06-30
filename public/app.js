@@ -1665,25 +1665,48 @@ async function releasePanel() {
   const d = await api('/api/release/inspect?path=' + encodeURIComponent(dirPath));
   const body = ov.querySelector('.rel-body');
   if (!d.ok) { body.innerHTML = `<div class="empty-state">${escapeHtml(d.error)}</div>`; return; }
-  const bump = d.version.replace(/(\d+)(\D*)$/, (m, n, t) => (Number(n) + 1) + t);
+  const bump = d.nextSourceVersion || d.version.replace(/(\d+)(\D*)$/, (m, n, t) => (Number(n) + 1) + t);
+  const winBump = d.nextWinVersion || `${d.version}-win.1`;
+  const channelChoices = d.hasWinDist ? `
+    <div class="rel-row">
+      <label>类型</label>
+      <select id="rel-channel">
+        <option value="source">源码 / macOS</option>
+        <option value="win">Windows 包</option>
+      </select>
+    </div>` : '';
   body.innerHTML = `
+    ${channelChoices}
     <div class="rel-row"><label>版本号</label><span class="rel-cur">当前 v${escapeHtml(d.version)} →</span><input id="rel-ver" value="${escapeHtml(bump)}" spellcheck="false"></div>
     <div class="rel-row rel-col"><label>发布说明${d.unreleased ? '（预填自 CHANGELOG 的 Unreleased 段）' : ''}</label><textarea id="rel-notes" rows="8" spellcheck="false">${escapeHtml(d.unreleased)}</textarea></div>
     <div class="rel-opts">
-      ${d.hasDist ? '<label><input type="checkbox" id="rel-dist" checked> 打包（npm run dist）</label>' : ''}
+      ${(d.hasDist || d.hasWinDist) ? '<label><input type="checkbox" id="rel-dist" checked> <span id="rel-dist-label">打包（npm run dist）</span></label>' : ''}
       ${d.remote ? '<label><input type="checkbox" id="rel-push" checked> 推送（git push）</label>' : ''}
-      ${d.gh && d.remote ? '<label><input type="checkbox" id="rel-gh" checked> GitHub Release' + (d.hasDist ? '（附 dmg）' : '') + '</label>' : ''}
+      ${d.gh && d.remote ? '<label><input type="checkbox" id="rel-gh" checked> <span id="rel-gh-label">GitHub Release' + (d.hasDist ? '（附 dmg）' : '') + '</span></label>' : ''}
     </div>
     ${d.dirty ? '<div class="rel-hint">工作区有未提交改动，会一并进这次发版 commit</div>' : ''}
     ${!d.isRepo ? '<div class="rel-hint">这里不是 git 仓库，只能改版本号</div>' : ''}
     <div class="input-actions"><button class="ghost-btn" id="rel-cancel">取消</button><button class="primary" id="rel-go">在终端开跑</button></div>`;
+  const updateReleaseChannel = () => {
+    const channel = $('#rel-channel') ? $('#rel-channel').value : 'source';
+    $('#rel-ver').value = channel === 'win' ? winBump : bump;
+    const distLabel = $('#rel-dist-label');
+    if (distLabel) distLabel.textContent = channel === 'win' ? '打包（npm run dist:win）' : '打包（npm run dist）';
+    const ghLabel = $('#rel-gh-label');
+    if (ghLabel) ghLabel.textContent = channel === 'win' ? 'GitHub Release（附 exe/zip）' : `GitHub Release${d.hasDist ? '（附 dmg）' : ''}`;
+  };
+  if ($('#rel-channel')) $('#rel-channel').onchange = updateReleaseChannel;
+  updateReleaseChannel();
   $('#rel-cancel').onclick = close;
   $('#rel-go').onclick = async () => {
+    const channel = $('#rel-channel') ? $('#rel-channel').value : 'source';
     const version = $('#rel-ver').value.trim();
-    if (!/^\d+\.\d+\.\d+/.test(version)) { toast('版本号要 x.y.z 格式', true); return; }
+    if (channel === 'win') {
+      if (!/^\d+\.\d+\.\d+-win\.[1-9]\d*$/.test(version)) { toast('Windows 包版本号要 x.y.z-win.N', true); return; }
+    } else if (!/^\d+\.\d+\.\d+$/.test(version)) { toast('版本号要 x.y.z 格式', true); return; }
     $('#rel-go').disabled = true;
     const r = await apiPost('/api/release/prepare', {
-      path: dirPath, version,
+      path: dirPath, version, channel,
       notes: $('#rel-notes').value,
       doDist: !!($('#rel-dist') && $('#rel-dist').checked),
       doPush: !!($('#rel-push') && $('#rel-push').checked),

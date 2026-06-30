@@ -74,6 +74,35 @@ async function main() {
 
   assert.strictEqual(update._test.normalizeRepo('https://github.com/demo/fanbox-windows.git', 'x/y'), 'demo/fanbox-windows');
   assert.strictEqual(update.cmpVer('v2.4.0-win.1', '2.3.9'), 1);
+  assert.strictEqual(update.cmpVer('v2.3.3-win.1', '2.3.3') > 0, true);
+  assert.strictEqual(update.cmpVer('v2.3.3-win.2', '2.3.3-win.1') > 0, true);
+  assert.strictEqual(update.cmpVer('v2.3.4', '2.3.3-win.9') > 0, true);
+  assert.strictEqual(update.cmpVer('v2.3.3-win.1', '2.3.3-win.1'), 0);
+
+  const winSuffixFetch = fakeFetch({
+    'https://api.github.com/repos/alchaincyf/fanbox/releases/latest': {
+      json: { tag_name: 'v2.3.3', html_url: 'https://github.com/alchaincyf/fanbox/releases/tag/v2.3.3', assets: [] },
+    },
+    'https://api.github.com/repos/bahayonghang/fanbox/releases/latest': {
+      json: { tag_name: 'v2.3.3-win.1', html_url: 'https://github.com/bahayonghang/fanbox/releases/tag/v2.3.3-win.1', assets },
+    },
+  });
+  result = await update.checkUpdates({
+    fetch: winSuffixFetch,
+    platform: 'win32',
+    currentVersion: '2.3.3',
+    env: {},
+  });
+  assert.strictEqual(result.primary.kind, 'release');
+  assert.strictEqual(result.primary.version, '2.3.3-win.1');
+
+  result = await update.checkUpdates({
+    fetch: winSuffixFetch,
+    platform: 'win32',
+    currentVersion: '2.3.3-win.1',
+    env: {},
+  });
+  assert.strictEqual(result.release, null);
 
   console.log('platform update tests passed');
 }

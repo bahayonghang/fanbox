@@ -549,7 +549,7 @@ kbd {
 .rel-row.rel-col { flex-direction: column; align-items: stretch; gap: 5px; }
 .rel-row label { color: var(--text-dim); flex: none; }
 .rel-cur { color: var(--text-faint); font-family: var(--font-mono); font-size: 12px; }
-#rel-ver { width: 110px; font-family: var(--font-mono); }
+#rel-ver { width: 150px; font-family: var(--font-mono); }
 #rel-notes { resize: vertical; font-size: 12px; line-height: 1.5; font-family: var(--font-mono); }
 .rel-opts { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-dim); }
 .rel-opts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
