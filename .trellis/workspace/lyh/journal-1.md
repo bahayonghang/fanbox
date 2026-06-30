@@ -175,3 +175,37 @@ Implemented server-platform adapter for disk/archive/thumb/open/search/terminal 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: C6 Windows release versioning
+
+**Date**: 2026-06-30
+**Task**: C6 Windows release versioning
+**Branch**: `win`
+
+### Summary
+
+Implemented Windows package release suffix handling, release wizard channel selection, update-channel comparison tests, and backend spec capture for vX.Y.Z-win.N.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9b1a3a` | (see git log) |
+| `cbfa19b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
