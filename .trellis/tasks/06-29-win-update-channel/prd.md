@@ -10,6 +10,8 @@
 
 - `main.js:10-27,31-67` 更新检查固定请求 `api.github.com/repos/alchaincyf/fanbox/releases/latest` 与上游 release page。
 - 当前只有一个概念，无法区分"上游发了新源码版本"与"Windows fork 发了新安装包"。
+- C1 已确定 Windows release 产物形态：`package.json` `build.win.target=["nsis","zip"]`，`artifactName="${productName}-${version}-win-${arch}.${ext}"`，所以 Windows 下载候选只认 GitHub release asset 中的 `.exe` / `.zip`。
+- `electron/preload.js` 已有 `window.fanboxUpdate` IPC：`onAvailable` / `get` / `open`；`public/app.js` 只渲染单一 `.update-pill`，当前文案为"新版本 vX 已发布 / 去下载"。
 
 ## Requirements
 
@@ -18,6 +20,7 @@
 - **R8.3** UI 区分两类提示：上游源码新版 → "建议同步源码"；Windows 包新版 → "建议下载安装包"。
 - **R8.4** Windows 用户的下载入口指向 Windows 产物，绝不指向 macOS `.dmg`。
 - **R8.5** macOS 行为保持：仍可只检查上游（darwin 不引入 Windows release 噪声）。
+- **R8.6** GitHub API 失败时保留 `releases/latest` 重定向兜底；Windows release 通道若没有 `.exe`/`.zip` asset，不推送"下载安装包"提示。
 
 ## Acceptance Criteria
 
@@ -25,6 +28,7 @@
 - [ ] AC5.2 上游源码有新版时单独提示"同步源码"，与二进制更新不混淆。
 - [ ] AC5.3 未配置 `FANBOX_RELEASE_REPO` 时安全降级（不报错、退回仅上游提示）。
 - [ ] AC5.4 macOS 更新检查不回归。
+- [ ] AC5.5 `node --check electron/platform/update.js electron/main.js electron/preload.js public/app.js` 与 `npm run test:platform` 通过。
 
 ## Out of Scope
 

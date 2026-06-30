@@ -343,6 +343,82 @@ The adapter owns platform branching and returns a payload with `supported`, `uns
 
 ---
 
+## Scenario: Electron Update Channel Adapter Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to update checking, release-channel environment variables, GitHub release queries, update IPC payloads, or `public/app.js` update notice rendering.
+- Update logic belongs in `electron/platform/update.js`; `electron/main.js` owns scheduling, dialogs, IPC state, and GitHub URL opening policy.
+- This is a cross-layer contract: GitHub release data -> platform adapter -> Electron IPC -> vanilla JS update pill.
+
+### 2. Signatures
+
+- `checkUpstream(opts) -> Promise<{ kind:"source", repo, tag, version, url } | null>`
+- `checkRelease(opts) -> Promise<{ kind:"release", repo, tag, version, url, assetName?, pageUrl? } | null>`
+- `checkUpdates(opts) -> Promise<{ checked, latestUpstream, latestRelease, upstream, release, primary }>`
+- `cmpVer(a, b) -> number`
+- IPC keeps `update:available`, `update:get`, and `update:open`; `window.fanboxUpdate` remains `onAvailable(cb)`, `get()`, and `open(url)`.
+
+### 3. Contracts
+
+- `FANBOX_UPSTREAM_REPO` defaults to `alchaincyf/fanbox` and represents source/upstream releases.
+- `FANBOX_RELEASE_REPO` defaults to `bahayonghang/fanbox` and represents Windows binary package releases; setting it to an empty string disables the release channel.
+- Windows `primary` update prefers `release` over `source`; macOS `primary` must only use upstream/source.
+- Windows binary downloads must come from GitHub release assets ending in `.exe` or `.zip`; `.exe` wins over `.zip`; `.dmg` must never be used for Windows download prompts.
+- API failures may fall back to `https://github.com/<repo>/releases/latest` redirects for upstream/source checks. Release-channel install prompts require API asset evidence; redirect-only release fallback is not enough.
+- Update payloads must preserve old `version` and `url` fields and may add `kind`, `repo`, `assetName`, `title`, `action`, and `secondary`.
+- `update:open` stays restricted to `https://github.com/` URLs.
+
+### 4. Validation & Error Matrix
+
+- GitHub API returns only `.dmg` assets for the release repo -> no Windows package prompt; fall back to source if applicable.
+- `FANBOX_RELEASE_REPO=""` -> no release query, no error, upstream-only behavior.
+- Upstream API fails but `releases/latest` redirect exposes a tag -> source prompt still works.
+- Both release and upstream are newer on Windows -> release is primary and upstream appears as a separate secondary action; do not merge the meanings.
+- No network / rate limit for every queried channel -> manual check shows the existing user-facing GitHub failure dialog; automatic check retries later.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `electron/main.js` calls `platformUpdate.checkUpdates({ net, env: process.env, platform: process.platform, currentVersion: app.getVersion() })` and renders dialogs from the returned `primary` payload.
+- Good: `public/app.js` branches update notice text by `kind` and stores skip state as `<kind>:<version>`.
+- Base: macOS sees the same source-release behavior as before, with no Windows package noise.
+- Bad: `electron/main.js` hardcodes `api.github.com/repos/alchaincyf/fanbox/releases/latest`, or Windows update UI opens a generic release page that might contain only `.dmg`.
+
+### 6. Tests Required
+
+- Syntax: `node --check electron/platform/update.js electron/main.js electron/preload.js public/app.js`.
+- Platform tests: `npm run test:platform` must include `scripts/test-platform-update.js`.
+- Assertions must cover `.exe` preferred over `.zip`, `.dmg` rejected, empty `FANBOX_RELEASE_REPO` disabled, macOS upstream-only primary, Windows release-first primary, and upstream redirect fallback.
+- Repo gates: `just check` and `just test`.
+- Review grep: `rg -n "api\\.github\\.com/repos/alchaincyf/fanbox|REL_PAGE" electron public scripts package.json` should find hardcoded upstream API only inside update adapter tests, not in `electron/main.js`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+const res = await net.fetch('https://api.github.com/repos/alchaincyf/fanbox/releases/latest');
+pendingUpdate = { version: rel.tag_name, url: rel.html_url };
+```
+
+This treats source releases and Windows packages as the same channel.
+
+#### Correct
+
+```js
+const result = await platformUpdate.checkUpdates({
+  net,
+  env: process.env,
+  platform: process.platform,
+  currentVersion: app.getVersion(),
+});
+pendingUpdate = updatePayload(result.primary, result.upstream);
+```
+
+The adapter owns repo selection and asset filtering; `main.js` only schedules checks and presents the returned payload.
+
+---
+
 ## Testing Requirements
 
 **No formal test framework.** The project still does not use Jest/Vitest or a lint framework. Use the real repo gates that exist, not invented test commands:

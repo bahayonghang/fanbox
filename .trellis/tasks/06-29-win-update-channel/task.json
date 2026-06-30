@@ -3,7 +3,7 @@
   "name": "win-update-channel",
   "title": "更新通道拆分(上游源码 vs Windows 包)",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
