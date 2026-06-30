@@ -363,6 +363,8 @@ The adapter owns platform branching and returns a payload with `supported`, `uns
 
 - `FANBOX_UPSTREAM_REPO` defaults to `alchaincyf/fanbox` and represents source/upstream releases.
 - `FANBOX_RELEASE_REPO` defaults to `bahayonghang/fanbox` and represents Windows binary package releases; setting it to an empty string disables the release channel.
+- Windows binary release tags use `v<base>-win.<n>` (for example `v2.3.3-win.1`) to mean the nth Windows package for upstream/base version `v<base>`.
+- Release comparison treats `x.y.z-win.N` as newer than plain `x.y.z` for the same base version, and compares `N` numerically; a higher base version still wins over any lower-base Windows revision.
 - Windows `primary` update prefers `release` over `source`; macOS `primary` must only use upstream/source.
 - Windows binary downloads must come from GitHub release assets ending in `.exe` or `.zip`; `.exe` wins over `.zip`; `.dmg` must never be used for Windows download prompts.
 - API failures may fall back to `https://github.com/<repo>/releases/latest` redirects for upstream/source checks. Release-channel install prompts require API asset evidence; redirect-only release fallback is not enough.
@@ -375,6 +377,7 @@ The adapter owns platform branching and returns a payload with `supported`, `uns
 - `FANBOX_RELEASE_REPO=""` -> no release query, no error, upstream-only behavior.
 - Upstream API fails but `releases/latest` redirect exposes a tag -> source prompt still works.
 - Both release and upstream are newer on Windows -> release is primary and upstream appears as a separate secondary action; do not merge the meanings.
+- Latest Windows release tag is `v2.3.3-win.1` and the app version is `2.3.3` -> Windows release prompt appears; if the app version is already `2.3.3-win.1`, it does not repeat.
 - No network / rate limit for every queried channel -> manual check shows the existing user-facing GitHub failure dialog; automatic check retries later.
 
 ### 5. Good/Base/Bad Cases
@@ -389,6 +392,8 @@ The adapter owns platform branching and returns a payload with `supported`, `uns
 - Syntax: `node --check electron/platform/update.js electron/main.js electron/preload.js public/app.js`.
 - Platform tests: `npm run test:platform` must include `scripts/test-platform-update.js`.
 - Assertions must cover `.exe` preferred over `.zip`, `.dmg` rejected, empty `FANBOX_RELEASE_REPO` disabled, macOS upstream-only primary, Windows release-first primary, and upstream redirect fallback.
+- Assertions must cover Windows release suffix ordering: `v2.3.3-win.1 > 2.3.3`, `v2.3.3-win.2 > v2.3.3-win.1`, and `v2.3.4 > v2.3.3-win.9`.
+- Release wizard tests must cover Windows channel command generation: `npm run dist:win`, `gh release create vX-win.N`, and `.exe` / `.zip` asset globs; source/macOS release stays on `npm run dist` and `.dmg`.
 - Repo gates: `just check` and `just test`.
 - Review grep: `rg -n "api\\.github\\.com/repos/alchaincyf/fanbox|REL_PAGE" electron public scripts package.json` should find hardcoded upstream API only inside update adapter tests, not in `electron/main.js`.
 
