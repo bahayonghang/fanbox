@@ -243,3 +243,41 @@ Added a Windows node-pty/ConPTY smoke script for PowerShell, cmd, optional Git B
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Windows port integration closure
+
+**Date**: 2026-06-30
+**Task**: Windows port integration closure
+**Branch**: `win`
+
+### Summary
+
+Closed the Windows-port parent task after adapter convergence, quality gates, and rebase rehearsal.
+
+### Main Changes
+
+- Completed the Windows-port parent integration review.
+- Closed the remaining PAC1 adapter-boundary gaps by moving trash handling, curl system proxy probing, and PTY shell selection behind platform adapters.
+- Verified syntax, platform tests, `just check`, `just test`, PAC grep, and an upstream/master rebase rehearsal with no conflicts.
+- Archived the long-term route container and the parent Windows-port task after recording PAC evidence.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aa5a6a8` | (see git log) |
+| `b119ba7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
