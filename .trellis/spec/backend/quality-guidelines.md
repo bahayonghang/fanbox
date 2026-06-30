@@ -180,6 +180,73 @@ spawn('cmd.exe', ['/d', '/s', '/c', '""C:\\path\\tool.cmd" "arg with spaces""'],
 
 ---
 
+## Scenario: Windows ConPTY Smoke Test Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to Windows embedded terminal smoke tests, `node-pty` / ConPTY validation, or automated checks for agent launch commands in `scripts/*`.
+- This is a quality/testing boundary. Keep automated checks deterministic and local; do not start real Claude/Codex TUI sessions from a platform test.
+
+### 2. Signatures
+
+- `node scripts/test-conpty-smoke.js` runs the Windows PTY smoke matrix.
+- `npm run test:platform` includes the ConPTY smoke script after the pure adapter tests.
+
+### 3. Contracts
+
+- Non-Windows platforms print a clear skip message and exit 0.
+- Windows requires `node-pty`; if the native module is unavailable, fail with a message telling the user to run `npm run rebuild`.
+- PowerShell and cmd are required shell cases. Git Bash is optional: verify it when discoverable, otherwise print skipped.
+- Each PTY shell case writes a lightweight command, validates both `process.cwd()` and a unique marker, then sends `exit`.
+- Agent launch coverage is a static UI contract check against `public/app.js` snippets such as `term.launchAgent('claude --dangerously-skip-permissions')` and `term.launchAgent('codex')`. Do not write real agent commands into a PTY in automated tests.
+- On Windows ConPTY, successful tests may still leave internal `node-pty` handles alive. After all assertions pass, the smoke script may call `process.exit(0)` to keep the platform test from hanging.
+
+### 4. Validation & Error Matrix
+
+- `node-pty` missing or not rebuilt -> fail the smoke script; embedded terminal would also be unavailable.
+- PowerShell or cmd missing -> fail; these are required Windows terminal baselines.
+- Git Bash missing -> skip, because Git Bash is optional user environment.
+- UI launch command snippet changed -> fail, because the static contract no longer matches the launcher behavior being guarded.
+- Calling `pty.kill()` on the success path -> may fork `conpty_console_list_agent` and print `AttachConsole failed` on Windows; avoid it unless handling timeout/failure cleanup.
+- Waiting only for `onExit` -> may hang the Node test process; assert on output and keep an explicit successful process exit path.
+
+### 5. Good/Base/Bad Cases
+
+- Good: the smoke writes `Write-Output (Get-Location).Path`, `echo FANBOX_CONPTY_CMD_OK`, or `pwd -W`, validates output, sends `exit`, and ends with `process.exit(0)` after all cases pass.
+- Base: timeout/failure paths may still call `pty.kill()` to avoid orphaning a failed case.
+- Bad: a test writes `claude`, `codex`, or `claude --dangerously-skip-permissions` into a live PTY; that can start interactive agents, spawn MCP helpers, or hang on credentials/network.
+
+### 6. Tests Required
+
+- Syntax: `node --check scripts/test-conpty-smoke.js`.
+- Smoke: `node scripts/test-conpty-smoke.js` on Windows shows PowerShell, cmd, optional Git Bash, and agent launch contract results.
+- Platform gate: `npm run test:platform`.
+- Repo gates: `just check` and `just test`.
+- Residual process check when debugging hangs: search for `scripts\test-conpty-smoke.js` processes before rerunning.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+term.write('codex\r');
+term.kill();
+```
+
+This can start a real TUI agent and trigger `node-pty` ConPTY cleanup noise on Windows.
+
+#### Correct
+
+```js
+term.write('echo FANBOX_CONPTY_CMD_OK\r\nexit\r\n');
+// After all smoke cases and static UI contract checks pass:
+process.exit(0);
+```
+
+Keep the PTY smoke focused on shell I/O, and verify agent launcher command text without executing the agent.
+
+---
+
 ## Scenario: Server System Command Adapter Contract
 
 ### 1. Scope / Trigger
