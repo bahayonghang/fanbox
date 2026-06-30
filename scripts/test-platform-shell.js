@@ -21,6 +21,9 @@ async function main() {
   assert.strictEqual(normalizeHomeEnv({ USERPROFILE: 'C:\\Users\\demo' }, 'win32').HOME, 'C:\\Users\\demo');
   assert.strictEqual(_test.chooseLaunchPath(['tool', 'tool.cmd', 'tool.exe'], 'win32'), 'tool.exe');
   assert.deepStrictEqual(_test.windowsLaunch('x.cmd', ['a b']).args, ['/d', '/s', '/c', '""x.cmd" "a b""']);
+  assert.deepStrictEqual(_test.defaultPtyShell({}, 'win32'), { shellPath: 'powershell.exe', shellArgs: [] });
+  assert.deepStrictEqual(_test.defaultPtyShell({}, 'darwin'), { shellPath: '/bin/zsh', shellArgs: ['-l'] });
+  assert.deepStrictEqual(_test.defaultPtyShell({ SHELL: '/opt/homebrew/bin/fish' }, 'darwin'), { shellPath: '/opt/homebrew/bin/fish', shellArgs: ['-l'] });
 
   const nodePath = await whichBin('node');
   assert.ok(nodePath, 'whichBin(node) should find node');

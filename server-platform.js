@@ -25,6 +25,19 @@ function cmdQuote(s) {
   return `"${String(s).replace(/"/g, '""')}"`;
 }
 
+function trashCommand(target, isDir, platform) {
+  if (platform === 'darwin') {
+    // 路径走 argv，不拼进单引号 AppleScript 字面量，避免含 ' 的文件名删除失败/注入。
+    return `osascript -e 'on run argv' -e 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)' -e 'end run' ${shellQuote(target)}`;
+  }
+  if (platform === 'win32') {
+    const method = isDir ? 'DeleteDirectory' : 'DeleteFile';
+    const ps = String(target).replace(/'/g, "''");
+    return `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${ps}','OnlyErrorDialogs','SendToRecycleBin')"`;
+  }
+  return `gio trash ${shellQuote(target)} || trash-put ${shellQuote(target)} || trash ${shellQuote(target)}`;
+}
+
 function decodeMaybeGbk(buf) {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
   catch { try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('latin1'); } }
@@ -104,6 +117,24 @@ async function diskUsage(p, deps = {}) {
   items.sort((a, b) => b.size - a.size);
   const total = items.reduce((a, b) => a + b.size, 0);
   return { ok: true, dir, total, items: items.slice(0, 60), more: Math.max(0, items.length - 60), partial };
+}
+
+function trashPath(p, deps = {}) {
+  return new Promise((resolve) => {
+    let target;
+    try { target = resolveInput(p, deps); } catch { return resolve({ ok: false, error: '非法路径' }); }
+    let isDir = false;
+    try { isDir = fs.lstatSync(target).isDirectory(); } catch { return resolve({ ok: false, error: '文件不存在' }); }
+    const cmd = trashCommand(target, isDir, platformOf(deps));
+    exec(cmd, (err) => {
+      if (!err) return resolve({ ok: true });
+      let msg = err.message;
+      if (platformOf(deps) === 'darwin' && /-1743|-600|not allowed|authoriz/i.test(msg)) {
+        msg = '需在「系统设置 → 隐私与安全性 → 自动化」里允许 FanBox 控制 Finder（首次删除会弹授权）';
+      }
+      resolve({ ok: false, error: msg });
+    });
+  });
 }
 
 async function zipNames(file, MAX) {
@@ -367,8 +398,23 @@ async function findByName(name, deps = {}) {
   return (await spotlightFind(['-name', q])) || [];
 }
 
+async function curlSystemProxyLine(deps = {}) {
+  const env = deps.env || process.env;
+  if (['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY'].some((k) => env[k])) return '';
+  if (platformOf(deps) !== 'darwin') return '';
+  try {
+    const out = await execFileText('scutil', ['--proxy'], { timeout: 3000, env });
+    const grab = (k) => (out.match(new RegExp(`\\b${k} : (\\S+)`)) || [])[1];
+    if (grab('HTTPSEnable') === '1') return `proxy = "http://${grab('HTTPSProxy')}:${grab('HTTPSPort')}"\n`;
+    if (grab('HTTPEnable') === '1') return `proxy = "http://${grab('HTTPProxy')}:${grab('HTTPPort')}"\n`;
+    if (grab('SOCKSEnable') === '1') return `proxy = "socks5h://${grab('SOCKSProxy')}:${grab('SOCKSPort')}"\n`;
+  } catch { /* 读不到就直连 */ }
+  return '';
+}
+
 module.exports = {
   diskUsage,
+  trashPath,
   archiveList,
   generateThumb,
   transcodeHeic,
@@ -377,12 +423,14 @@ module.exports = {
   terminalCwd,
   contentSearch,
   findByName,
+  curlSystemProxyLine,
   _test: {
     zipNames,
     decodeMaybeGbk,
     decodeLsofPath,
     shellQuote,
     cmdQuote,
+    trashCommand,
     dirSizeNode,
   },
 };

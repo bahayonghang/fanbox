@@ -59,6 +59,14 @@ async function main() {
     const cwd = await platform.terminalCwd(12345, { platform: 'win32' });
     assert.strictEqual(cwd, null);
 
+    const trashCmd = platform._test.trashCommand("C:\\tmp\\O'Brien.txt", false, 'win32');
+    assert.ok(trashCmd.includes('DeleteFile'));
+    assert.ok(trashCmd.includes("O''Brien.txt"));
+    assert.ok(platform._test.trashCommand('/tmp/a b.txt', false, 'darwin').includes('osascript'));
+
+    assert.strictEqual(await platform.curlSystemProxyLine({ platform: 'win32', env: {} }), '');
+    assert.strictEqual(await platform.curlSystemProxyLine({ platform: 'darwin', env: { https_proxy: 'http://127.0.0.1:7890' } }), '');
+
     await assert.rejects(
       platform.generateThumb(path.join(dir, 'a.txt'), 'txt', 240, path.join(dir, 'thumb.png'), false, { platform: 'win32' }),
       /当前平台不支持生成缩略图/

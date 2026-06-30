@@ -148,6 +148,13 @@ function windowsLaunch(bin, args) {
   };
 }
 
+function defaultPtyShell(env = process.env, platform = process.platform) {
+  return {
+    shellPath: env.SHELL || (platform === 'win32' ? 'powershell.exe' : '/bin/zsh'),
+    shellArgs: platform === 'win32' ? [] : ['-l'],
+  };
+}
+
 function killProcess(child) {
   if (!child) return;
   if (process.platform === 'win32' && child.pid) {
@@ -267,6 +274,7 @@ async function spawnCommand(bin, args = [], opts = {}) {
 module.exports = {
   spawnCommand,
   whichBin,
+  defaultPtyShell,
   normalizeHomeEnv,
   normalizePathEnv,
   mergePathValues,
@@ -278,5 +286,6 @@ module.exports = {
     chooseLaunchPath,
     cmdQuote,
     windowsLaunch,
+    defaultPtyShell,
   },
 };

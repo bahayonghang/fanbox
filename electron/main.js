@@ -10,6 +10,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { terminalCwd } = require('../server-platform');
+const { defaultPtyShell } = require('./platform/shell');
 const platformPower = require('./platform/power');
 const platformClipboard = require('./platform/clipboard');
 const platformScreenshot = require('./platform/screenshot');
@@ -458,12 +459,11 @@ function recStop(id) {
 // ---------- 终端 IPC（node-pty）----------
 ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, theme }) => {
   if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
-  const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+  const { shellPath, shellArgs } = defaultPtyShell(process.env, process.platform);
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // login shell（-l）：GUI 启动的进程只继承精简 PATH，不读 .zprofile/.zlogin，
   // 用户在那里配的 Homebrew/nvm/npm 全局路径（claude 等）就丢了 → 「普通终端能找到、fanbox 找不到」。
   // 走 login shell 把这些路径带进来。Windows 的 powershell 无此机制，保持空参数。
-  const shellArgs = process.platform === 'win32' ? [] : ['-l'];
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
   const env = { ...process.env, TERM: 'xterm-256color', FANBOX: '1' };
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';

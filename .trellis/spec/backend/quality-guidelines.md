@@ -114,6 +114,7 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 
 - `spawnCommand(bin, args, options) -> Promise<Result>` launches a command with argv, stdin, env, cwd, idle timeout, max timeout, and optional stdout line callback.
 - `whichBin(bin, options) -> Promise<string|null>` returns an absolute launch path or `null`.
+- `defaultPtyShell(env, platform) -> { shellPath, shellArgs }` returns the node-pty login-shell choice for embedded terminal sessions.
 - `fullEnv() -> Promise<NodeJS.ProcessEnv>` returns the merged child environment used by agent processes.
 - `electron/wechat/driver.js` keeps `which(bin) -> Promise<boolean>`, `runClaude(...)`, and `runCodex(...)` as the public driver surface.
 
@@ -124,6 +125,8 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 - Windows child env must preserve `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, and a working `Path`/`PATH` value so Claude/Codex credentials and user-level npm shims remain discoverable.
 - `fullEnv()` may supplement proxy variables from OS settings only when no proxy env is already present; explicit env values win.
 - `whichBin()` must prefer direct PATH/PATHEXT search on Windows and may use `where.exe` only as fallback. On macOS, the login-shell `command -v` fallback is allowed to preserve Finder/Dock startup behavior.
+- `defaultPtyShell()` owns the embedded-terminal shell switch: Windows gets `powershell.exe` with no login args; macOS/Linux use `$SHELL` or `/bin/zsh` with `['-l']`.
+- `electron/main.js` must call `defaultPtyShell()` for node-pty spawn and should not inline `/bin/zsh`, PowerShell, or login-shell args.
 - Windows `.cmd` and `.bat` shims are not spawned directly. They must be launched through `cmd.exe /d /s /c` with `windowsVerbatimArguments: true`.
 
 ### 4. Validation & Error Matrix
@@ -266,16 +269,19 @@ Keep the PTY smoke focused on shell I/O, and verify agent launcher command text 
 - `terminalCwd(pid, deps) -> Promise<string|null>`
 - `contentSearch(query, rootPath, deps) -> Promise<{ results, truncated?, engine? }>`
 - `findByName(name, deps) -> Promise<string[]>`
+- `trashPath(path, deps) -> Promise<{ ok, error? }>`
+- `curlSystemProxyLine(deps) -> Promise<string>`
 
 `deps` is the boundary for server-owned helpers such as `resolvePath`, `grepFiles`, and `kindOf`; do not import `server.js` from the adapter.
 
 ### 3. Contracts
 
 - `server.js` owns HTTP routing, `resolvePath` entry validation, thumbnail cache response streaming, and API response shape.
-- `server-platform.js` owns platform switches and direct system command calls (`du`, `unzip`, `tar`, `gzip`, `sips`, `qlmanage`, `mdfind`, `lsof`, `open`, `start`, `xdg-open`).
+- `server-platform.js` owns platform switches and direct system command calls (`du`, `unzip`, `tar`, `gzip`, `sips`, `qlmanage`, `mdfind`, `lsof`, `open`, `start`, `xdg-open`, trash commands, and macOS `scutil` proxy probing for curl).
 - macOS branches preserve the existing system-command behavior when moved into the adapter.
 - Windows branches must either provide an equivalent Node/system implementation or return a clear degraded result (`unsupported`, `null`, or a thrown thumbnail/transcode error that the existing caller maps to 415).
 - Zip preview must keep the central-directory reader and UTF-8/GBK filename decoding before any system fallback.
+- `server.js` may keep thin wrappers such as `trashPath()` and `openInOS()`, but those wrappers must delegate to `serverPlatform`.
 
 ### 4. Validation & Error Matrix
 
@@ -284,13 +290,16 @@ Keep the PTY smoke focused on shell I/O, and verify agent launcher command text 
 - Thumbnail or HEIC generation unsupported -> throw a Chinese user-facing error; `serveThumb` / `serveHeicAsJpeg` converts it to the existing 415 response.
 - Windows terminal cwd unavailable -> `terminalCwd()` returns `null`; IPC callers return `{ ok:false }` and UI falls back.
 - `mdfind` unavailable or empty on macOS -> call `grepFiles()` and return `engine:"grep"`.
+- Trash target missing -> `{ ok:false, error:"文件不存在" }`; invalid path -> `{ ok:false, error:"非法路径" }`.
+- macOS curl proxy fallback reads system proxy only when proxy env vars are absent; Windows/Linux return an empty curl config line.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `server.js` has a thin `contentSearch()` wrapper that calls `serverPlatform.contentSearch(query, root, { resolvePath, grepFiles, kindOf })`.
+- Good: `server.js` has a thin `trashPath()` wrapper that calls `serverPlatform.trashPath(path, { resolvePath })`.
 - Good: `electron/main.js` calls `terminalCwd(pid)` and keeps the existing `{ ok:true,cwd }` / `{ ok:false }` IPC shape.
 - Base: `server-platform.js` may contain direct system commands; review grep should find them there.
-- Bad: `server.js` directly calls `execFile('sips')`, `execFile('mdfind')`, `execFile('unzip')`, `execFile('du')`, or embeds `lsof -a` logic again.
+- Bad: `server.js` directly calls `execFile('sips')`, `execFile('mdfind')`, `execFile('unzip')`, `execFile('du')`, calls `scutil`, embeds trash commands, or embeds `lsof -a` logic again.
 
 ### 6. Tests Required
 
@@ -298,6 +307,7 @@ Keep the PTY smoke focused on shell I/O, and verify agent launcher command text 
 - Unit-style platform tests: `npm run test:platform` must include `scripts/test-server-platform.js`.
 - Repo gates: `just check` and `just test`.
 - Review grep: `rg -n "du -sk|execFile\\('mdfind'|execFile\\('sips'|execFile\\('qlmanage'|execFile\\('unzip'|lsof -a" server.js electron\main.js` should not match.
+- PAC grep: direct OS command strings in business files (`server.js`, `electron/main.js`, `electron/wechat/*`) should be absent except comments/user-facing labels; adapter files and tests may contain the platform commands they own.
 - Smoke when possible: hit `/api/du`, `/api/archive`, `/api/content`, and `/api/thumb` on a temporary local server.
 
 ### 7. Wrong vs Correct
