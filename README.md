@@ -205,7 +205,7 @@ just build-win
 just ci
 ```
 
-`just build-win` runs the native `node-pty` rebuild before `npm run dist:win`. GitHub Actions currently uses `windows-2022` because Electron/node-gyp does not recognize the VS 2026 toolchain yet.
+`just build-win` runs the native `node-pty` rebuild before `npm run dist:win`. The fork overrides Electron rebuild's bundled `@electron/node-gyp` with upstream `node-gyp@12.2.0` so local VS 2026 / VS 18 toolchains are recognized while CI can keep using Node 20. If a Windows machine lacks the VS C++ Spectre-mitigated libraries and hits `MSB8040`, `npm run rebuild` retries the generated `node-pty` solution with `/p:SpectreMitigation=false`; install the "C++ x64/x86 Spectre-mitigated libs" component to use the upstream `node-pty` default.
 
 Keep the fork synced with upstream:
 

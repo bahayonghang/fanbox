@@ -49,6 +49,7 @@
 - `npm run predist` and `npm run predist:win`: both delegate to `npm run check:vendor-patch`.
 - `npm run dist`: macOS package entry, remains `electron-builder --mac`.
 - `npm run dist:win`: Windows package entry, remains `electron-builder --win`.
+- `npm run rebuild`: wrapper around `@electron/rebuild` for `node-pty`; on Windows it may retry only `MSB8040` Spectre-library failures with an explicit MSBuild `/p:SpectreMitigation=false` fallback.
 - `just check`, `just test`, `just build`, `just build-mac`, `just build-win`, `just ci`: repo-level cross-platform gates.
 
 ### 3. Contracts
@@ -57,21 +58,23 @@
 - `build.win.target` produces both `nsis` and `zip` artifacts.
 - `just build-win` runs `npm run rebuild` before `npm run dist:win` so `node-pty` is rebuilt for Electron.
 - Windows CI calls `npm ci` and then `just ci`; CI must not duplicate a separate hand-written build sequence.
-- Pin Windows CI to `windows-2022` while the current Electron/node-gyp toolchain rejects Visual Studio 2026 / VS 18.
+- `package.json` overrides Electron rebuild's bundled `@electron/node-gyp` with upstream `node-gyp@12.2.0` so Visual Studio 2026 / VS 18 is recognized while keeping `@electron/rebuild` 3.x and Node 20 CI compatibility.
+- The rebuild wrapper must first try upstream `electron-rebuild`. It may use the non-Spectre MSBuild fallback only for Windows `MSB8040` when the selected VS instance has no `VC/Tools/MSVC/*/lib/spectre` directory.
 
 ### 4. Validation & Error Matrix
 
 - xterm patch missing -> `npm run check:vendor-patch` fails before packaging.
 - Invalid `package.json` -> `just check` fails during JSON parse.
 - Missing or ignored `build/icon.ico` -> Windows package config is incomplete; fix `.gitignore` and the icon asset before CI.
-- `npm run rebuild` fails on VS 2026 with `unknown version "undefined"` -> use `windows-2022` CI or install VS 2022 Build Tools locally; do not paper over this by changing runtime code.
+- `npm run rebuild` fails with `unknown version "undefined"` on VS 2026 -> the npm override is missing or stale; refresh `package-lock.json` and confirm `node_modules/@electron/node-gyp` resolves to upstream `node-gyp@12.2.0`.
+- `npm run rebuild` fails with `MSB8040` and no fallback -> the wrapper failed to detect the Spectre-library case or `node-pty` did not generate `build/binding.sln`; inspect `scripts/rebuild-node-pty.js` before changing upstream native module files.
 - macOS `dist` no longer equals `electron-builder --mac` -> packaging regression.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `just ci` is the single CI entry and dispatches to the platform build recipe.
 - Base: `just check` and `just test` pass even while no formal test framework exists.
-- Bad: CI runs `npm run dist:win` directly without `npm run rebuild`, or uses `windows-latest` before the native rebuild toolchain supports VS 18.
+- Bad: CI runs `npm run dist:win` directly without `npm run rebuild`, or removes the native build override without proving VS 18 support still works.
 
 ### 6. Tests Required
 

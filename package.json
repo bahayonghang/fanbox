@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "app": "electron .",
-    "rebuild": "electron-rebuild -f -w node-pty",
+    "rebuild": "node scripts/rebuild-node-pty.js",
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
     "check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\"",
@@ -81,6 +81,9 @@
     "highlight.js": "^11.11.1",
     "marked": "^12.0.2",
     "monaco-editor": "^0.52.2"
+  },
+  "overrides": {
+    "@electron/node-gyp": "npm:node-gyp@12.2.0"
   },
   "license": "MIT"
 }
