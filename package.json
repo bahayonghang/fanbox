@@ -17,7 +17,7 @@
     "predist": "npm run check:vendor-patch",
     "predist:win": "npm run check:vendor-patch",
     "dist": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:win": "electron-builder --win --publish never"
   },
   "build": {
     "appId": "com.huashu.fanbox",
