@@ -315,3 +315,36 @@ Implemented the Appearance settings modal with Catppuccin themes, immediate auto
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Agents 启动参数设置
+
+**Date**: 2026-07-02
+**Task**: Agents 启动参数设置
+**Branch**: `win-dev`
+
+### Summary
+
+完成设置中心两页改造，新增 Agents 启动参数配置，并将 Codex 默认启动改为 YOLO 模式。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b911148a76a19aab4c32b9295b301da46a5b589` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
