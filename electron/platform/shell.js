@@ -148,9 +148,19 @@ function windowsLaunch(bin, args) {
   };
 }
 
+function defaultWindowsPtyShell(env = process.env) {
+  if (env.SHELL) return env.SHELL;
+  const candidates = [
+    findOnPath('pwsh.exe', env, 'win32'),
+    env.ProgramFiles ? path.join(env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe') : null,
+    env.ProgramW6432 ? path.join(env.ProgramW6432, 'PowerShell', '7', 'pwsh.exe') : null,
+  ];
+  return candidates.find((file) => file && fileExists(file)) || 'powershell.exe';
+}
+
 function defaultPtyShell(env = process.env, platform = process.platform) {
   return {
-    shellPath: env.SHELL || (platform === 'win32' ? 'powershell.exe' : '/bin/zsh'),
+    shellPath: platform === 'win32' ? defaultWindowsPtyShell(env) : (env.SHELL || '/bin/zsh'),
     shellArgs: platform === 'win32' ? [] : ['-l'],
   };
 }
@@ -286,6 +296,7 @@ module.exports = {
     chooseLaunchPath,
     cmdQuote,
     windowsLaunch,
+    defaultWindowsPtyShell,
     defaultPtyShell,
   },
 };

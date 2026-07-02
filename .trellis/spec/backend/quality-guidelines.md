@@ -128,7 +128,7 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 - Windows child env must preserve `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, and a working `Path`/`PATH` value so Claude/Codex credentials and user-level npm shims remain discoverable.
 - `fullEnv()` may supplement proxy variables from OS settings only when no proxy env is already present; explicit env values win.
 - `whichBin()` must prefer direct PATH/PATHEXT search on Windows and may use `where.exe` only as fallback. On macOS, the login-shell `command -v` fallback is allowed to preserve Finder/Dock startup behavior.
-- `defaultPtyShell()` owns the embedded-terminal shell switch: Windows gets `powershell.exe` with no login args; macOS/Linux use `$SHELL` or `/bin/zsh` with `['-l']`.
+- `defaultPtyShell()` owns the embedded-terminal shell switch: Windows honors explicit `SHELL`, otherwise prefers PowerShell 7 `pwsh.exe` from `PATH` or the standard `Program Files\PowerShell\7\pwsh.exe` install path, then falls back to `powershell.exe`, always with no login args; macOS/Linux use `$SHELL` or `/bin/zsh` with `['-l']`.
 - `electron/main.js` must call `defaultPtyShell()` for node-pty spawn and should not inline `/bin/zsh`, PowerShell, or login-shell args.
 - Windows `.cmd` and `.bat` shims are not spawned directly. They must be launched through `cmd.exe /d /s /c` with `windowsVerbatimArguments: true`.
 
@@ -137,6 +137,7 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 - Windows `.cmd` shim spawned directly with `shell:false` -> `EINVAL` or missing launch; wrap it with `cmd.exe /d /s /c`.
 - Prompt/persona shell-quoted into one command string -> broken quotes/newlines or injection risk; pass argv plus stdin.
 - GUI PATH lacks user npm/global shim dirs -> `whichBin('claude'/'codex')` returns `null`; merge Windows PATH keys and add known user-level dirs.
+- Windows `defaultPtyShell()` hardcodes `powershell.exe` -> embedded terminals open Windows PowerShell 5.1 even when PowerShell 7 is installed; resolve `pwsh.exe` first and keep `powershell.exe` only as compatibility fallback.
 - Existing `http_proxy`/`https_proxy` overwritten by OS proxy fallback -> user-selected proxy is lost; only fill proxy vars when none are set.
 - Missing home/app data vars -> Claude/Codex cannot find credentials; normalize `USERPROFILE`/`HOME` without deleting `APPDATA`/`LOCALAPPDATA`.
 - Timeout kills only the shell wrapper on Windows -> child agent survives; use process-tree kill for timed out Windows commands.
@@ -145,13 +146,14 @@ Use Node for cross-platform npm script checks, and let `just` orchestrate platfo
 
 - Good: `runClaude()` passes `['-p', '--output-format', 'stream-json', '--append-system-prompt', persona]` and writes the user prompt to stdin.
 - Good: `whichBin('codex')` returns an absolute `.exe`, `.cmd`, `.bat`, or `.com` path from the merged GUI-safe env.
+- Good: `defaultPtyShell()` returns PowerShell 7 `pwsh.exe` on Windows machines where it is installed, but still returns `powershell.exe` when no PowerShell 7 executable is discoverable.
 - Base: macOS still uses shell env dump and `scutil --proxy`; only CLI discovery may fall back to `command -v` in a login shell.
 - Bad: `spawn(loginShell(), ['-lc', cmd])` for agent work, PowerShell `-lc`, or POSIX `shq()` escaping inside the agent driver.
 
 ### 6. Tests Required
 
 - Syntax: `node --check electron/platform/env.js electron/platform/shell.js electron/wechat/driver.js server.js`.
-- Unit-style platform scripts: `npm run test:platform`.
+- Unit-style platform scripts: `npm run test:platform`, including assertions that Windows `defaultPtyShell()` respects explicit `SHELL`, prefers `pwsh.exe`, supports the standard PowerShell 7 install path, and falls back to `powershell.exe`.
 - Repo gates: `just check` and `just test`.
 - Review grep: `rg -n "spawn\\(loginShell|\\['-lc'|shq\\(|command -v|/bin/zsh|/bin/sh" electron\wechat electron\platform server.js`.
 - Windows smoke: `whichBin('node')`, `whichBin('claude')`, `whichBin('codex')`, `whichBin('git')`, and `whichBin('gh')` in the GUI-style env.
@@ -204,7 +206,7 @@ spawn('cmd.exe', ['/d', '/s', '/c', '""C:\\path\\tool.cmd" "arg with spaces""'],
 - Windows requires `node-pty`; if the native module is unavailable, fail with a message telling the user to run `npm run rebuild`.
 - PowerShell and cmd are required shell cases. Git Bash is optional: verify it when discoverable, otherwise print skipped.
 - Each PTY shell case writes a lightweight command, validates both `process.cwd()` and a unique marker, then sends `exit`.
-- Agent launch coverage is a static UI contract check against `public/app.js` snippets such as `term.launchAgent('claude --dangerously-skip-permissions')` and `term.launchAgent('codex')`. Do not write real agent commands into a PTY in automated tests.
+- Agent launch coverage is a static UI contract check against `public/app.js`: default `AGENT_REGISTRY` entries must keep Claude/Codex commands, `AGENT_DEFAULTS` must include both, and dynamic buttons must still call `term.launchAgent(a.cmd)`. Do not write real agent commands into a PTY in automated tests.
 - On Windows ConPTY, successful tests may still leave internal `node-pty` handles alive. After all assertions pass, the smoke script may call `process.exit(0)` to keep the platform test from hanging.
 
 ### 4. Validation & Error Matrix

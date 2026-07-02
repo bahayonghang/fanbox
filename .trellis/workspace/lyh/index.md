@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-06-30
+- **Total Sessions**: 9
+- **Last Active**: 2026-07-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~283 | Active |
+| `journal-1.md` | ~317 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-07-02 | Settings UI theme and font customization | `c218256`, `ce915bc` | `win-dev` |
 | 8 | 2026-06-30 | Windows port integration closure | `aa5a6a8`, `b119ba7` | `win` |
 | 7 | 2026-06-30 | Windows ConPTY smoke matrix | `a7a981f`, `150dc0c` | `win` |
 | 6 | 2026-06-30 | C6 Windows release versioning | `b9b1a3a`, `cbfa19b` | `win` |
