@@ -12,11 +12,11 @@ dev:
     npm run app
 
 check:
-    npm run check:vendor-patch
-    node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json ok')"
+    @npm --silent run check:vendor-patch
+    @node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json ok')"
 
 test: check
-    npm run test:platform
+    @npm --silent run test:platform
 
 [windows]
 build: build-win
@@ -25,11 +25,14 @@ build: build-win
 build: build-mac
 
 build-mac:
-    npm run dist
+    @echo "[fanbox] Packaging macOS app..."
+    @npm --silent run dist
 
 build-win:
-    npm run rebuild
-    npm run dist:win
+    @echo "[fanbox] Rebuilding native node-pty module..."
+    @npm --silent run rebuild
+    @echo "[fanbox] Packaging Windows app..."
+    @npm --silent run dist:win
 
 [windows]
 install: build-win

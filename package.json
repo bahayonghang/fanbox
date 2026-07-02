@@ -20,7 +20,7 @@
     "dist": "APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --arm64",
     "predist:x64": "npm run check:vendor-patch",
     "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
-    "dist:win": "electron-builder --win --publish never"
+    "dist:win": "node -r ./scripts/electron-builder-quiet-log.js ./node_modules/electron-builder/out/cli/cli.js --win --publish never"
   },
   "build": {
     "appId": "com.huashu.fanbox",

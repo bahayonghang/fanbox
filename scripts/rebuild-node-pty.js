@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const nodePtyBuildDir = path.join(root, 'node_modules', 'node-pty', 'build');
 const solutionPath = path.join(nodePtyBuildDir, 'binding.sln');
 const configPath = path.join(nodePtyBuildDir, 'config.gypi');
+const verbose = process.env.FANBOX_BUILD_VERBOSE === '1' || process.argv.includes('--verbose');
 
 function runNodeRebuild() {
   const cli = require.resolve('@electron/rebuild/lib/cli.js');
@@ -22,6 +23,14 @@ function runNodeRebuild() {
 function writeOutput(result) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
+}
+
+function writeSuccess(message, result) {
+  if (verbose) {
+    writeOutput(result);
+    return;
+  }
+  console.log(message);
 }
 
 function readConfig() {
@@ -81,9 +90,11 @@ function runNonSpectreFallback() {
   const configuration = (config.target_defaults && config.target_defaults.default_configuration) || 'Release';
   const platform = msbuildPlatform(config.variables && config.variables.target_arch);
 
-  console.warn('[fanbox] Visual Studio Spectre-mitigated libraries are missing.');
-  console.warn('[fanbox] Retrying node-pty with MSBuild /p:SpectreMitigation=false.');
-  console.warn('[fanbox] Install the VS "C++ x64/x86 Spectre-mitigated libs" component to use node-pty upstream defaults.');
+  if (verbose) {
+    console.warn('[fanbox] Visual Studio Spectre-mitigated libraries are missing.');
+    console.warn('[fanbox] Retrying node-pty with MSBuild /p:SpectreMitigation=false.');
+    console.warn('[fanbox] Install the VS "C++ x64/x86 Spectre-mitigated libs" component to use node-pty upstream defaults.');
+  }
 
   const result = spawnSync(msbuild, [
     solutionPath,
@@ -97,13 +108,22 @@ function runNonSpectreFallback() {
   ], {
     cwd: path.join(root, 'node_modules', 'node-pty'),
     env: process.env,
-    stdio: 'inherit',
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
   });
 
   if (result.error) {
     console.error(result.error && result.error.stack || result.error);
     return 1;
   }
+  if (result.status === 0) {
+    writeSuccess('[fanbox] node-pty rebuilt with non-Spectre MSBuild fallback (VS Spectre libs missing).', result);
+    return 0;
+  }
+  if (!verbose) {
+    console.error('[fanbox] Non-Spectre MSBuild fallback failed.');
+  }
+  writeOutput(result);
   return result.status || 0;
 }
 
@@ -113,7 +133,7 @@ if (result.error) {
   process.exit(1);
 }
 if (result.status === 0) {
-  writeOutput(result);
+  writeSuccess('[fanbox] node-pty rebuilt for Electron.', result);
   process.exit(0);
 }
 
