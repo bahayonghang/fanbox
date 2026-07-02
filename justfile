@@ -31,4 +31,8 @@ build-win:
     npm run rebuild
     npm run dist:win
 
+[windows]
+install: build-win
+    @chcp.com 65001 > $null; $ErrorActionPreference = 'Stop'; $installer = Get-ChildItem -Path 'dist' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $installer) { throw 'No Windows installer found in dist/. Run just build-win first.' }; Write-Host "Installing $($installer.Name)"; Start-Process -FilePath $installer.FullName -Wait
+
 ci: test build
