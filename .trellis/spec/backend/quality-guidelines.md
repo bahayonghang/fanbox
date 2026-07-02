@@ -48,7 +48,7 @@
 - `npm run check:vendor-patch`: Node-based check for the patched xterm IME key path. It must run on both Windows and macOS.
 - `npm run predist` and `npm run predist:win`: both delegate to `npm run check:vendor-patch`.
 - `npm run dist`: macOS package entry, remains `electron-builder --mac`.
-- `npm run dist:win`: Windows package entry, remains `electron-builder --win`.
+- `npm run dist:win`: Windows package entry, invokes the electron-builder CLI for `--win`; it may preload a local quiet-log shim, but must preserve Windows packaging semantics and `--publish never`.
 - `npm run rebuild`: wrapper around `@electron/rebuild` for `node-pty`; on Windows it may retry only `MSB8040` Spectre-library failures with an explicit MSBuild `/p:SpectreMitigation=false` fallback.
 - `just check`, `just test`, `just build`, `just build-mac`, `just build-win`, `just ci`: repo-level cross-platform gates.
 
@@ -60,6 +60,7 @@
 - Windows CI calls `npm ci` and then `just ci`; CI must not duplicate a separate hand-written build sequence.
 - `package.json` overrides Electron rebuild's bundled `@electron/node-gyp` with upstream `node-gyp@12.2.0` so Visual Studio 2026 / VS 18 is recognized while keeping `@electron/rebuild` 3.x and Node 20 CI compatibility.
 - The rebuild wrapper must first try upstream `electron-rebuild`. It may use the non-Spectre MSBuild fallback only for Windows `MSB8040` when the selected VS instance has no `VC/Tools/MSVC/*/lib/spectre` directory.
+- Quiet build wrappers may hide successful `electron-builder` noise such as repeated signing/no-signing lines, but failures must still print the underlying error. `FANBOX_BUILD_VERBOSE=1` restores full packaging output for debugging.
 
 ### 4. Validation & Error Matrix
 
@@ -69,6 +70,7 @@
 - `npm run rebuild` fails with `unknown version "undefined"` on VS 2026 -> the npm override is missing or stale; refresh `package-lock.json` and confirm `node_modules/@electron/node-gyp` resolves to upstream `node-gyp@12.2.0`.
 - `npm run rebuild` fails with `MSB8040` and no fallback -> the wrapper failed to detect the Spectre-library case or `node-pty` did not generate `build/binding.sln`; inspect `scripts/rebuild-node-pty.js` before changing upstream native module files.
 - macOS `dist` no longer equals `electron-builder --mac` -> packaging regression.
+- Windows `dist:win` no longer invokes electron-builder for `--win` -> packaging regression, even if the command is wrapped for quieter logging.
 
 ### 5. Good/Base/Bad Cases
 
@@ -81,7 +83,7 @@
 - `just --list` shows all expected recipes.
 - `just check` and `just test` pass on the current platform.
 - `just --dry-run build` shows the platform-specific build sequence.
-- A Node config probe confirms `dist`, `dist:win`, `build.mac`, `build.dmg`, and `build.win`.
+- A Node config probe confirms `dist`, `dist:win`, `build.mac`, `build.dmg`, and `build.win`; `dist:win` must still include the local quiet logger and the electron-builder CLI `--win` invocation.
 - `git check-ignore -v build/icon.ico` confirms the icon is whitelisted.
 - GitHub Actions on `windows-2022` must upload `dist/*.exe` and `dist/*.zip` for final Windows artifact proof.
 
