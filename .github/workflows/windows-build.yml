@@ -89,18 +89,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows artifacts
-        run: just ci
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: fanbox-windows-${{ github.sha }}
-          path: |
-            dist/*.exe
-            dist/*.zip
-          if-no-files-found: error
-
       - name: Prepare GitHub Release metadata
         id: release_meta
         if: steps.release_gate.outputs.should_release == 'true'
@@ -110,12 +98,16 @@ jobs:
         run: |
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           $version = [string]$pkg.version
+          $baseVersion = $version -replace '-win\.\d+$', ''
           $manualTag = '${{ github.event.inputs.release_tag }}'.Trim()
 
           if ($manualTag) {
-            $tag = $manualTag
+            $tag = if ($manualTag.StartsWith('v')) { $manualTag } else { "v$manualTag" }
+            if ($tag -notmatch '^v\d+\.\d+\.\d+-win\.[1-9]\d*$') {
+              throw "Windows release_tag must look like vX.Y.Z-win.N, got '$manualTag'."
+            }
           } else {
-            $escapedVersion = [regex]::Escape($version)
+            $escapedVersion = [regex]::Escape($baseVersion)
             $maxWinPatch = 0
             $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
             foreach ($release in @($releases)) {
@@ -131,14 +123,15 @@ jobs:
                 $maxWinPatch = [Math]::Max($maxWinPatch, [int]$match.Groups[1].Value)
               }
             }
-            $tag = "v$version-win.$($maxWinPatch + 1)"
+            $tag = "v$baseVersion-win.$($maxWinPatch + 1)"
           }
+          $packageVersion = $tag -replace '^v', ''
 
           $title = "$tag Windows"
           $notes = "Windows release built from ``$env:GITHUB_SHA`` on the ``win`` branch."
           if (Test-Path CHANGELOG.md) {
             $changelog = Get-Content CHANGELOG.md -Raw
-            $escapedVersion = [regex]::Escape($version)
+            $escapedVersion = [regex]::Escape($baseVersion)
             $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\].*?(?=^## \[|\z)")
             if ($match.Success) {
               $notes = $match.Value.Trim()
@@ -148,8 +141,31 @@ jobs:
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
 
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "package_version=$packageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "title=$title" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "Prepared release $tag"
+
+      - name: Stamp Windows package version
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkg.version = '${{ steps.release_meta.outputs.package_version }}'
+          $json = $pkg | ConvertTo-Json -Depth 20
+          Set-Content -Path package.json -Value ($json + "`n") -Encoding utf8
+          "Stamped package.json version $($pkg.version)"
+
+      - name: Build Windows artifacts
+        run: just ci
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fanbox-windows-${{ github.sha }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
 
       - name: Publish GitHub Release
         if: steps.release_gate.outputs.should_release == 'true'
