@@ -130,6 +130,29 @@ function updateConfig(mutator) {
   return run;
 }
 
+function cleanAgentId(v) {
+  const id = String(v || '');
+  return /^[\w-]{1,32}$/.test(id) ? id : '';
+}
+function cleanAgentCommand(v) {
+  return String(v || '')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+function normalizeAgentLaunchCommands(input) {
+  const out = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  const entries = Object.entries(input).slice(0, 64);
+  for (const [rawId, rawCmd] of entries) {
+    const id = cleanAgentId(rawId);
+    const cmd = cleanAgentCommand(rawCmd);
+    if (id && cmd) out[id] = cmd;
+  }
+  return out;
+}
+
 function sendJSON(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -2053,19 +2076,38 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, await createEntry(b.path, b.name, b.type));
     }
     if (p === '/api/agents') {
-      // coding agent 启动按钮（#38）：GET 回配置，POST 存设置面板勾选的 enabledAgents
-      // enabled = 面板勾选的内置 agent id；custom = config.json 手写的 agents 数组（同 id 覆盖内置命令，新 id 追加）
+      // coding agent 启动按钮（#38）：GET 回配置，POST 存设置面板勾选项与启动命令覆盖
+      // enabled = 面板勾选的内置 agent id；custom = config.json 手写 agents；launchCommands = UI 管理的启动命令覆盖
       if (req.method === 'POST') {
         const b = await readBody(req);
-        const enabled = (Array.isArray(b.enabled) ? b.enabled : [])
-          .filter((x) => typeof x === 'string' && /^[\w-]{1,32}$/.test(x)).slice(0, 32);
-        await updateConfig((c) => { c.enabledAgents = enabled; });
-        return sendJSON(res, 200, { ok: true, enabled });
+        const body = b && typeof b === 'object' ? b : {};
+        let enabled = null;
+        let launchCommands = {};
+        await updateConfig((c) => {
+          if (Array.isArray(body.enabled)) {
+            enabled = body.enabled.map(cleanAgentId).filter(Boolean).slice(0, 32);
+            c.enabledAgents = enabled;
+          } else {
+            enabled = Array.isArray(c.enabledAgents) ? c.enabledAgents : null;
+          }
+          if (Object.prototype.hasOwnProperty.call(body, 'launchCommands')) {
+            launchCommands = normalizeAgentLaunchCommands(body.launchCommands);
+            if (Object.keys(launchCommands).length) c.agentLaunchCommands = launchCommands;
+            else delete c.agentLaunchCommands;
+          } else {
+            launchCommands = normalizeAgentLaunchCommands(c.agentLaunchCommands);
+          }
+        });
+        return sendJSON(res, 200, { ok: true, enabled, launchCommands });
       }
       const cfg = await readConfig();
       const custom = (Array.isArray(cfg.agents) ? cfg.agents : [])
         .filter((a) => a && typeof a.id === 'string' && a.id && typeof a.cmd === 'string' && a.cmd);
-      return sendJSON(res, 200, { enabled: Array.isArray(cfg.enabledAgents) ? cfg.enabledAgents : null, custom });
+      return sendJSON(res, 200, {
+        enabled: Array.isArray(cfg.enabledAgents) ? cfg.enabledAgents : null,
+        custom,
+        launchCommands: normalizeAgentLaunchCommands(cfg.agentLaunchCommands),
+      });
     }
     if (p === '/api/agents/which') {
       // 装没装探测：bins 走登录 shell command -v；apps 是桌面应用，走 open -Ra

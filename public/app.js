@@ -1700,7 +1700,71 @@ function renderFontRow(field) {
     <span class="font-sample">${escapeHtml(field.sample)}</span>
   </label>`;
 }
-function openSettings() {
+
+const SETTINGS_PAGES = [
+  { id: 'appearance', label: '外观设置', title: '外观设置' },
+  { id: 'agents', label: 'Agents 启动参数设置', title: 'Agents 启动参数设置' },
+];
+function settingsPageMeta(pageId) {
+  return SETTINGS_PAGES.find((p) => p.id === pageId) || SETTINGS_PAGES[0];
+}
+function renderSettingsRail(activeId) {
+  return SETTINGS_PAGES.map((p) => `<button class="${p.id === activeId ? 'active' : ''}" type="button" data-settings-page="${escapeHtml(p.id)}">${escapeHtml(p.label)}</button>`).join('');
+}
+function renderAppearanceSettings() {
+  return `<section class="settings-section">
+    <div class="settings-section-head">
+      <h3>主题</h3>
+      <p>选择后立即生效，自动保存到本机。</p>
+    </div>
+    <div class="settings-theme-grid">${THEMES.map(renderThemeButton).join('')}</div>
+  </section>
+  <section class="settings-section">
+    <div class="settings-section-head">
+      <h3>字体</h3>
+      <p>输入字体族名称或字体栈，留空则跟随主题默认值。</p>
+    </div>
+    <div class="font-form">${FONT_FIELDS.map(renderFontRow).join('')}</div>
+  </section>`;
+}
+function renderSettingsFooter(pageId) {
+  if (pageId === 'agents') {
+    return `<button class="ghost-btn settings-reset" data-agent-reset-all>全部恢复默认</button>
+      <span class="settings-status" data-agent-settings-status>修改后点击保存生效</span>
+      <span class="settings-actions">
+        <button class="ghost-btn" data-settings-close>关闭</button>
+        <button class="primary settings-done" data-agent-save>保存</button>
+      </span>`;
+  }
+  return `<button class="ghost-btn settings-reset" data-settings-reset>恢复默认</button>
+    <button class="primary settings-done" data-settings-close>关闭</button>`;
+}
+function renderSettingsPage(ov, pageId) {
+  const page = settingsPageMeta(pageId);
+  ov.dataset.settingsPage = page.id;
+  ov.querySelector('#settings-title').textContent = page.title;
+  ov.querySelector('.settings-rail').innerHTML = renderSettingsRail(page.id);
+  ov.querySelector('.settings-content').innerHTML = page.id === 'agents' ? renderAgentSettingsPage() : renderAppearanceSettings();
+  ov.querySelector('.settings-foot').innerHTML = renderSettingsFooter(page.id);
+  if (page.id === 'appearance') syncFontSamples(ov);
+  if (page.id === 'agents') {
+    hydrateAgentSettingsPage(ov);
+    if (!agentState.loaded) {
+      setAgentSettingsStatus(ov, '正在读取 agent 设置…');
+      loadAgents().then(() => {
+        if (document.body.contains(ov) && ov.dataset.settingsPage === 'agents') renderSettingsPage(ov, 'agents');
+      }).catch(() => setAgentSettingsStatus(ov, '读取失败', true));
+    }
+  }
+}
+function focusSettingsPage(ov) {
+  const pageId = ov.dataset.settingsPage;
+  const target = pageId === 'agents'
+    ? (ov.querySelector('[data-agent-command]') || ov.querySelector('[data-agent-enabled]') || ov.querySelector('[data-settings-page].active'))
+    : (ov.querySelector('[data-theme-id].active') || ov.querySelector('[data-theme-id]') || ov.querySelector('[data-settings-page].active'));
+  target?.focus();
+}
+function openSettings(pageId = 'appearance') {
   closeSettings();
   const ov = document.createElement('div');
   ov.className = 'settings-overlay';
@@ -1708,42 +1772,31 @@ function openSettings() {
     <header class="settings-head">
       <div>
         <div class="settings-kicker">设置</div>
-        <h2 id="settings-title">外观</h2>
+        <h2 id="settings-title">设置</h2>
       </div>
       <button class="settings-close" data-settings-close title="关闭">✕</button>
     </header>
     <div class="settings-body">
-      <aside class="settings-rail" aria-label="设置分类">
-        <button class="active" type="button">外观</button>
-      </aside>
-      <div class="settings-content">
-        <section class="settings-section">
-          <div class="settings-section-head">
-            <h3>主题</h3>
-            <p>选择后立即生效，自动保存到本机。</p>
-          </div>
-          <div class="settings-theme-grid">${THEMES.map(renderThemeButton).join('')}</div>
-        </section>
-        <section class="settings-section">
-          <div class="settings-section-head">
-            <h3>字体</h3>
-            <p>输入字体族名称或字体栈，留空则跟随主题默认值。</p>
-          </div>
-          <div class="font-form">${FONT_FIELDS.map(renderFontRow).join('')}</div>
-        </section>
-      </div>
+      <aside class="settings-rail" aria-label="设置分类"></aside>
+      <div class="settings-content"></div>
     </div>
-    <footer class="settings-foot">
-      <button class="ghost-btn settings-reset" data-settings-reset>恢复默认</button>
-      <button class="primary settings-done" data-settings-close>关闭</button>
-    </footer>
+    <footer class="settings-foot"></footer>
   </section>`;
   document.body.appendChild(ov);
-  syncFontSamples(ov);
+  renderSettingsPage(ov, pageId);
   const done = () => closeSettings();
-  ov.querySelectorAll('[data-settings-close]').forEach((b) => { b.onclick = done; });
   ov.onclick = (ev) => { if (ev.target === ov) done(); };
-  ov.addEventListener('click', (ev) => {
+  ov.addEventListener('click', async (ev) => {
+    if (ev.target.closest('[data-settings-close]')) {
+      done();
+      return;
+    }
+    const pageBtn = ev.target.closest('[data-settings-page]');
+    if (pageBtn) {
+      renderSettingsPage(ov, pageBtn.dataset.settingsPage);
+      setTimeout(() => focusSettingsPage(ov), 0);
+      return;
+    }
     const themeBtn = ev.target.closest('[data-theme-id]');
     if (themeBtn) {
       applyTheme(themeBtn.dataset.themeId);
@@ -1754,29 +1807,57 @@ function openSettings() {
       });
       return;
     }
-    if (ev.target.closest('[data-settings-reset]')) resetAppearancePrefs();
+    if (ev.target.closest('[data-settings-reset]')) {
+      resetAppearancePrefs();
+      return;
+    }
+    const enabled = ev.target.closest('[data-agent-enabled]');
+    if (enabled) {
+      await saveEnabledAgentsFromSettings(ov);
+      return;
+    }
+    const resetCmd = ev.target.closest('[data-agent-command-reset]');
+    if (resetCmd) {
+      resetAgentCommandInput(resetCmd.closest('[data-agent-row]'));
+      markAgentSettingsDirty(ov);
+      return;
+    }
+    if (ev.target.closest('[data-agent-reset-all]')) {
+      resetAllAgentCommandInputs(ov);
+      markAgentSettingsDirty(ov);
+      return;
+    }
+    if (ev.target.closest('[data-agent-save]')) {
+      await saveAgentCommandsFromSettings(ov);
+    }
   });
   ov.addEventListener('input', (ev) => {
     const input = ev.target.closest('[data-font-key]');
-    if (!input) return;
-    const field = FONT_FIELDS.find((f) => f.key === input.dataset.fontKey);
-    if (!field) return;
-    const v = cleanFontFamily(input.value);
-    state.fonts[field.key] = v;
-    saveFontPrefs();
-    applyFontPrefs(state.fonts);
-    setFontSample(input.parentElement, field, v);
+    if (input) {
+      const field = FONT_FIELDS.find((f) => f.key === input.dataset.fontKey);
+      if (!field) return;
+      const v = cleanFontFamily(input.value);
+      state.fonts[field.key] = v;
+      saveFontPrefs();
+      applyFontPrefs(state.fonts);
+      setFontSample(input.parentElement, field, v);
+      return;
+    }
+    if (ev.target.closest('[data-agent-command]')) markAgentSettingsDirty(ov);
   });
   function onKey(ev) {
     if (ev.key === 'Escape') {
       ev.preventDefault();
       ev.stopPropagation();
       done();
+    } else if (ev.key === 'Enter' && ev.target.closest('[data-agent-command]')) {
+      ev.preventDefault();
+      saveAgentCommandsFromSettings(ov);
     }
   }
   ov._settingsKey = onKey;
   document.addEventListener('keydown', onKey, true);
-  setTimeout(() => (ov.querySelector('[data-theme-id].active') || ov.querySelector('[data-theme-id]'))?.focus(), 0);
+  setTimeout(() => focusSettingsPage(ov), 0);
 }
 function closeSettings() {
   const old = document.querySelector('.settings-overlay');
@@ -2739,12 +2820,12 @@ const wechatView = {
 
 // ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
 // 三层：① AGENT_REGISTRY 内置 11 个主流 agent（图标在 /assets/agents/）
-//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
-//      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
+//      ② 设置面板勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
+//      ③ config.json 的 agents 数组做高级自定义；agentLaunchCommands 存 UI 管理的启动命令覆盖
 // app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
 const AGENT_REGISTRY = [
   { id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions', bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code' },
-  { id: 'codex', label: 'Codex', cmd: 'codex', bin: 'codex', install: 'npm install -g @openai/codex' },
+  { id: 'codex', label: 'Codex', cmd: 'codex --dangerously-bypass-approvals-and-sandbox', bin: 'codex', install: 'npm install -g @openai/codex' },
   { id: 'hermes', label: 'Hermes Agent', cmd: 'hermes', bin: 'hermes', install: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' },
   { id: 'openclaw', label: 'OpenClaw', cmd: 'openclaw', bin: 'openclaw', install: 'npm install -g openclaw' },
   { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', bin: 'kimi', install: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash' },
@@ -2756,8 +2837,9 @@ const AGENT_REGISTRY = [
   { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
 ];
 const AGENT_DEFAULTS = ['claude', 'codex'];
-const agentState = { enabled: null, custom: [] };
+const agentState = { enabled: null, custom: [], launchCommands: {}, loaded: false };
 const agentIconCache = new Map();
+let agentWhichCache = null;
 
 async function agentIconHtml(id) {
   const key = String(id).replace(/[^\w-]/g, '');
@@ -2777,26 +2859,73 @@ async function agentIconHtml(id) {
   return html;
 }
 
+function cleanAgentId(v) {
+  const id = String(v || '');
+  return /^[\w-]{1,32}$/.test(id) ? id : '';
+}
+function cleanAgentCommand(v) {
+  return String(v || '')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+function cleanAgentLabel(v) {
+  return String(v || '').replace(/[\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+function normalizeAgentLaunchCommands(input) {
+  const out = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  Object.entries(input).slice(0, 64).forEach(([rawId, rawCmd]) => {
+    const id = cleanAgentId(rawId);
+    const cmd = cleanAgentCommand(rawCmd);
+    if (id && cmd) out[id] = cmd;
+  });
+  return out;
+}
+function normalizeCustomAgent(a) {
+  if (!a || typeof a !== 'object') return null;
+  const id = cleanAgentId(a.id);
+  const cmd = cleanAgentCommand(a.cmd);
+  if (!id || !cmd) return null;
+  const label = cleanAgentLabel(a.label) || id;
+  return { ...a, id, label, cmd };
+}
+function customAgents() {
+  return (Array.isArray(agentState.custom) ? agentState.custom : []).map(normalizeCustomAgent).filter(Boolean);
+}
+function agentCatalog() {
+  const byId = new Map(customAgents().map((a) => [a.id, a]));
+  const list = [];
+  for (const a of AGENT_REGISTRY) {
+    const ov = byId.get(a.id);
+    byId.delete(a.id);
+    list.push(ov ? { ...a, label: ov.label || a.label, cmd: ov.cmd, customOverride: true, builtin: true } : { ...a, builtin: true });
+  }
+  for (const [id, a] of byId) list.push({ ...a, id, label: a.label || id, customOnly: true, builtin: false });
+  return list;
+}
+function applyAgentLaunchCommand(a) {
+  const cmd = cleanAgentCommand(agentState.launchCommands && agentState.launchCommands[a.id]);
+  return cmd ? { ...a, cmd } : a;
+}
+
 async function loadAgents() {
   try {
     const r = await api('/api/agents');
-    agentState.enabled = Array.isArray(r.enabled) && r.enabled.length ? r.enabled : null;
+    agentState.enabled = Array.isArray(r.enabled) ? r.enabled : null;
     agentState.custom = Array.isArray(r.custom) ? r.custom : [];
-  } catch { agentState.enabled = null; agentState.custom = []; }
+    agentState.launchCommands = normalizeAgentLaunchCommands(r.launchCommands);
+  } catch { agentState.enabled = null; agentState.custom = []; agentState.launchCommands = {}; }
+  agentState.loaded = true;
 }
 
-// 生效的按钮清单：面板勾选管显隐；custom 同 id 只覆盖 label/cmd，不影响显隐；custom 新 id 恒显示追加在后
+// 生效的按钮清单：面板勾选管内置显隐；custom 新 id 恒显示追加在后；launchCommands 最后覆盖命令
 function activeAgents() {
-  const on = new Set(agentState.enabled || AGENT_DEFAULTS);
-  const byId = new Map(agentState.custom.filter((a) => a && a.id && typeof a.cmd === 'string' && a.cmd).map((a) => [String(a.id), a]));
-  const list = [];
-  for (const a of AGENT_REGISTRY) {
-    const ov = byId.get(a.id); byId.delete(a.id);
-    if (!on.has(a.id)) continue;
-    list.push(ov ? { ...a, label: ov.label || a.label, cmd: ov.cmd } : a);
-  }
-  for (const [id, a] of byId) list.push({ id, label: a.label || id, cmd: a.cmd });
-  return list;
+  const on = new Set(Array.isArray(agentState.enabled) ? agentState.enabled : AGENT_DEFAULTS);
+  return agentCatalog()
+    .filter((a) => a.customOnly || on.has(a.id))
+    .map(applyAgentLaunchCommand);
 }
 
 async function renderAgentButtons() {
@@ -2814,60 +2943,129 @@ async function renderAgentButtons() {
   }
 }
 
-// 设置面板：勾选即生效；未安装的显示「未装」，点它复制安装命令
-const agentsPop = {
-  el: null, which: null,
-  toggle() { if (this.el) this.close(); else this.open(); },
-  close() { if (!this.el) return; this.el.remove(); this.el = null; document.removeEventListener('mousedown', this._out, true); },
-  open() {
-    const on = new Set(agentState.enabled || AGENT_DEFAULTS);
-    const pop = document.createElement('div');
-    pop.className = 'agents-pop';
-    pop.innerHTML = `<div class="ap-head">一键启动的 coding agent</div>
-      <div class="ap-list">${AGENT_REGISTRY.map((a) => `
-        <label class="ap-row" data-id="${a.id}">
-          <input type="checkbox" ${on.has(a.id) ? 'checked' : ''}>
-          <span class="ap-ic" data-ic="${a.id}"></span>
-          <span class="ap-name">${escapeHtml(a.label)}</span>
-          <span class="ap-flag" data-flag="${a.id}"></span>
-        </label>`).join('')}</div>
-      <div class="ap-foot">勾选即生效 · 点「未装」复制安装命令<br>高级：~/.fanbox/config.json 的 agents 数组可自定义命令 / 加新 agent</div>`;
-    document.body.appendChild(pop);
-    const r = $('#agent-config').getBoundingClientRect();
-    pop.style.top = Math.round(r.bottom + 6) + 'px';
-    pop.style.right = Math.max(8, Math.round(window.innerWidth - r.right - 8)) + 'px';
-    this.el = pop;
-    AGENT_REGISTRY.forEach(async (a) => { const el = pop.querySelector(`[data-ic="${a.id}"]`); const ic = await agentIconHtml(a.id); if (el) el.innerHTML = ic || `<span class="agent-abbr">${escapeHtml(a.label.slice(0, 2))}</span>`; });
-    this.markInstalled(pop);
-    pop.querySelectorAll('.ap-row input').forEach((cb) => {
-      cb.onchange = async () => {
-        const ids = [...pop.querySelectorAll('.ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
-        agentState.enabled = ids.length ? ids : null;
-        renderAgentButtons();
-        try { await apiPost('/api/agents', { enabled: ids }); } catch { toast('保存失败', true); }
-      };
-    });
-    this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
-    document.addEventListener('mousedown', this._out, true);
-  },
-  async markInstalled(pop) {
-    if (!this.which) {
-      const bins = AGENT_REGISTRY.filter((a) => a.bin).map((a) => a.bin).join(',');
-      const apps = AGENT_REGISTRY.filter((a) => a.app).map((a) => a.app).join(',');
-      try { this.which = await api(`/api/agents/which?bins=${bins}&apps=${encodeURIComponent(apps)}`); } catch { this.which = {}; return; }
-    }
-    for (const a of AGENT_REGISTRY) {
-      const f = pop.querySelector(`[data-flag="${a.id}"]`);
-      if (!f || this.which[a.bin || a.app] !== false) continue;
-      f.textContent = '未装';
-      f.title = '点击复制安装命令：' + a.install;
-      f.onclick = (ev) => { ev.preventDefault(); navigator.clipboard.writeText(a.install).then(() => toast('已复制安装命令')); };
-    }
-  },
-};
+function renderAgentSettingsRow(a, enabledSet) {
+  const id = cleanAgentId(a.id);
+  const defaultCmd = cleanAgentCommand(a.cmd);
+  const override = cleanAgentCommand(agentState.launchCommands && agentState.launchCommands[id]);
+  const cmd = override || defaultCmd;
+  const enabled = enabledSet.has(id);
+  const enableHtml = a.customOnly
+    ? '<span class="agent-custom-pill">自定义</span>'
+    : `<label class="agent-enable"><input type="checkbox" data-agent-enabled ${enabled ? 'checked' : ''}>启用</label>`;
+  const source = a.customOnly ? 'config.json 自定义' : (a.customOverride ? 'config.json 覆盖内置命令' : '内置默认');
+  return `<div class="agent-settings-row" data-agent-row data-agent-id="${escapeHtml(id)}" data-agent-default="${escapeHtml(defaultCmd)}">
+    <div class="agent-settings-top">
+      <span class="agent-settings-ic" data-agent-settings-ic="${escapeHtml(id)}"></span>
+      <span class="agent-settings-name"><b>${escapeHtml(a.label || id)}</b><em>${escapeHtml(source)}</em></span>
+      ${enableHtml}
+      <span class="agent-install-flag" data-agent-install="${escapeHtml(id)}"></span>
+    </div>
+    <div class="agent-command-line">
+      <input data-agent-command value="${escapeHtml(cmd)}" placeholder="${escapeHtml(defaultCmd)}" spellcheck="false" autocomplete="off">
+      <button type="button" data-agent-command-reset title="恢复此 agent 的默认启动命令">默认</button>
+    </div>
+  </div>`;
+}
+function renderAgentSettingsPage() {
+  const enabledSet = new Set(Array.isArray(agentState.enabled) ? agentState.enabled : AGENT_DEFAULTS);
+  const rows = agentCatalog().map((a) => renderAgentSettingsRow(a, enabledSet)).join('');
+  return `<section class="settings-section">
+    <div class="settings-section-head">
+      <h3>一键启动 Agents</h3>
+      <p>勾选控制终端工具栏按钮；启动命令保存后，下次点击 agent 按钮生效。</p>
+    </div>
+    <div class="agent-settings-list">${rows}</div>
+  </section>`;
+}
+async function loadAgentInstallState() {
+  if (agentWhichCache) return agentWhichCache;
+  const bins = AGENT_REGISTRY.filter((a) => a.bin).map((a) => a.bin).join(',');
+  const apps = AGENT_REGISTRY.filter((a) => a.app).map((a) => a.app).join(',');
+  try { agentWhichCache = await api(`/api/agents/which?bins=${bins}&apps=${encodeURIComponent(apps)}`); }
+  catch { agentWhichCache = {}; }
+  return agentWhichCache;
+}
+async function hydrateAgentSettingsPage(ov) {
+  const rows = [...ov.querySelectorAll('[data-agent-settings-ic]')];
+  rows.forEach(async (el) => {
+    const id = el.dataset.agentSettingsIc;
+    const ic = await agentIconHtml(id);
+    if (document.body.contains(ov) && el.isConnected) el.innerHTML = ic || `<span class="agent-abbr">${escapeHtml(id.slice(0, 2))}</span>`;
+  });
+  const which = await loadAgentInstallState();
+  if (!document.body.contains(ov) || ov.dataset.settingsPage !== 'agents') return;
+  for (const a of AGENT_REGISTRY) {
+    const f = ov.querySelector(`[data-agent-install="${a.id}"]`);
+    if (!f || which[a.bin || a.app] !== false) continue;
+    f.textContent = '未装';
+    f.title = '点击复制安装命令：' + a.install;
+    f.onclick = (ev) => {
+      ev.preventDefault();
+      navigator.clipboard.writeText(a.install).then(() => toast('已复制安装命令'));
+    };
+  }
+}
+function setAgentSettingsStatus(ov, text, isErr = false) {
+  const s = ov?.querySelector('[data-agent-settings-status]');
+  if (!s) return;
+  s.textContent = text;
+  s.classList.toggle('err', !!isErr);
+  s.classList.toggle('dirty', text.includes('未保存'));
+}
+function markAgentSettingsDirty(ov) {
+  setAgentSettingsStatus(ov, '有未保存更改');
+}
+function resetAgentCommandInput(row) {
+  const input = row?.querySelector('[data-agent-command]');
+  if (!input) return;
+  input.value = row.dataset.agentDefault || '';
+}
+function resetAllAgentCommandInputs(ov) {
+  ov.querySelectorAll('[data-agent-row]').forEach(resetAgentCommandInput);
+}
+function collectAgentCommandsFromSettings(ov) {
+  const next = {};
+  ov.querySelectorAll('[data-agent-row]').forEach((row) => {
+    const id = cleanAgentId(row.dataset.agentId);
+    const cmd = cleanAgentCommand(row.querySelector('[data-agent-command]')?.value);
+    const def = cleanAgentCommand(row.dataset.agentDefault);
+    if (id && cmd && cmd !== def) next[id] = cmd;
+  });
+  return next;
+}
+async function saveAgentCommandsFromSettings(ov) {
+  const next = collectAgentCommandsFromSettings(ov);
+  agentState.launchCommands = next;
+  try {
+    const r = await apiPost('/api/agents', { launchCommands: next });
+    agentState.launchCommands = normalizeAgentLaunchCommands(r.launchCommands || next);
+    await renderAgentButtons();
+    renderSettingsPage(ov, 'agents');
+    setAgentSettingsStatus(ov, '已保存启动参数');
+    toast('启动参数已保存');
+  } catch {
+    setAgentSettingsStatus(ov, '保存失败', true);
+    toast('保存失败', true);
+  }
+}
+async function saveEnabledAgentsFromSettings(ov) {
+  const ids = [...ov.querySelectorAll('[data-agent-row] [data-agent-enabled]:checked')]
+    .map((x) => cleanAgentId(x.closest('[data-agent-row]').dataset.agentId))
+    .filter(Boolean);
+  agentState.enabled = ids;
+  await renderAgentButtons();
+  try {
+    const r = await apiPost('/api/agents', { enabled: ids });
+    agentState.enabled = Array.isArray(r.enabled) ? r.enabled : ids;
+    setAgentSettingsStatus(ov, '启用状态已保存');
+  } catch {
+    setAgentSettingsStatus(ov, '保存失败', true);
+    toast('保存失败', true);
+  }
+}
 
 async function bindAgentButtons() {
-  $('#agent-config').onclick = () => agentsPop.toggle();
+  $('#agent-config').onclick = () => openSettings('agents');
   await loadAgents();
   await renderAgentButtons();
 }
@@ -5150,7 +5348,7 @@ async function init() {
     img.src = '/fs' + encodeURI(abs);
   }, true);
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => { b.onclick = () => applyTheme(b.dataset.skin); });
-  $('#settings-entry')?.addEventListener('click', openSettings);
+  $('#settings-entry')?.addEventListener('click', () => openSettings());
   await loadRoots();
   await loadFavorites();
   loadAgentProjects();

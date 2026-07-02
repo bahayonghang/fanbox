@@ -185,7 +185,7 @@ function verifyAgentLaunchContracts() {
   const expected = [
     "const AGENT_REGISTRY = [",
     "{ id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions'",
-    "{ id: 'codex', label: 'Codex', cmd: 'codex'",
+    "{ id: 'codex', label: 'Codex', cmd: 'codex --dangerously-bypass-approvals-and-sandbox'",
     "const AGENT_DEFAULTS = ['claude', 'codex'];",
     'term.launchAgent(a.cmd)',
   ];
