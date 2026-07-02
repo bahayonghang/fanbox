@@ -1,0 +1,32 @@
+{
+  "id": "agent-launch-arguments-settings",
+  "name": "agent-launch-arguments-settings",
+  "title": "Support custom agent launch arguments settings",
+  "description": "Rename the lower-left appearance shortcut into a general settings center and add an Agents launch-parameter settings page, including Codex YOLO default launch.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "frontend",
+  "package": null,
+  "priority": "P2",
+  "creator": "lyh",
+  "assignee": "lyh",
+  "createdAt": "2026-07-02",
+  "completedAt": "2026-07-02",
+  "branch": null,
+  "base_branch": "win-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "public/index.html",
+    "public/app.js",
+    "public/style.css",
+    "server.js",
+    "scripts/test-conpty-smoke.js"
+  ],
+  "notes": "",
+  "meta": {}
+}
