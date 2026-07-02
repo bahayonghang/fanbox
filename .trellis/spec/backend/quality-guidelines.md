@@ -204,7 +204,7 @@ spawn('cmd.exe', ['/d', '/s', '/c', '""C:\\path\\tool.cmd" "arg with spaces""'],
 - Windows requires `node-pty`; if the native module is unavailable, fail with a message telling the user to run `npm run rebuild`.
 - PowerShell and cmd are required shell cases. Git Bash is optional: verify it when discoverable, otherwise print skipped.
 - Each PTY shell case writes a lightweight command, validates both `process.cwd()` and a unique marker, then sends `exit`.
-- Agent launch coverage is a static UI contract check against `public/app.js` snippets such as `term.launchAgent('claude --dangerously-skip-permissions')` and `term.launchAgent('codex')`. Do not write real agent commands into a PTY in automated tests.
+- Agent launch coverage is a static UI contract check against `public/app.js`: default `AGENT_REGISTRY` entries must keep Claude/Codex commands, `AGENT_DEFAULTS` must include both, and dynamic buttons must still call `term.launchAgent(a.cmd)`. Do not write real agent commands into a PTY in automated tests.
 - On Windows ConPTY, successful tests may still leave internal `node-pty` handles alive. After all assertions pass, the smoke script may call `process.exit(0)` to keep the platform test from hanging.
 
 ### 4. Validation & Error Matrix

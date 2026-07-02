@@ -183,8 +183,11 @@ async function runShellSmoke(label, shell, commands, marker, args = []) {
 function verifyAgentLaunchContracts() {
   const appJs = fs.readFileSync(path.join(TEST_CWD, 'public', 'app.js'), 'utf8');
   const expected = [
-    "term.launchAgent('claude --dangerously-skip-permissions')",
-    "term.launchAgent('codex')",
+    "const AGENT_REGISTRY = [",
+    "{ id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions'",
+    "{ id: 'codex', label: 'Codex', cmd: 'codex'",
+    "const AGENT_DEFAULTS = ['claude', 'codex'];",
+    'term.launchAgent(a.cmd)',
   ];
   for (const snippet of expected) {
     if (!appJs.includes(snippet)) {

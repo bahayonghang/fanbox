@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.3.3",
+  "version": "2.4.0",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
@@ -10,13 +10,16 @@
     "start": "node server.js",
     "app": "electron .",
     "rebuild": "node scripts/rebuild-node-pty.js",
+    "rebuild:pty": "cd node_modules/node-pty && node-gyp rebuild --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://www.electronjs.org/headers --arch=$PTY_ARCH",
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
     "check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\"",
     "test:platform": "node scripts/test-platform-shell.js && node scripts/test-platform-env.js && node scripts/test-server-platform.js && node scripts/test-platform-power.js && node scripts/test-platform-clipboard.js && node scripts/test-platform-update.js && node scripts/test-release-wizard.js && node scripts/test-conpty-smoke.js",
     "predist": "npm run check:vendor-patch",
     "predist:win": "npm run check:vendor-patch",
-    "dist": "electron-builder --mac",
+    "dist": "electron-builder --mac --arm64",
+    "predist:x64": "npm run check:vendor-patch",
+    "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
     "dist:win": "electron-builder --win --publish never"
   },
   "build": {
@@ -34,6 +37,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "identity": "Apple Development: chen yunfei (FG7WYU86RP)",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -41,8 +45,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
         {
-          "target": "dmg",
-          "arch": "arm64"
+          "target": "dmg"
         }
       ]
     },
@@ -80,7 +83,8 @@
     "esbuild": "^0.28.0",
     "highlight.js": "^11.11.1",
     "marked": "^12.0.2",
-    "monaco-editor": "^0.52.2"
+    "monaco-editor": "^0.52.2",
+    "node-gyp": "^12.4.0"
   },
   "overrides": {
     "@electron/node-gyp": "npm:node-gyp@12.2.0"

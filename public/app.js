@@ -2436,6 +2436,141 @@ const wechatView = {
   syncDot(on) { const d = $('#wechat-dot'); if (d) d.classList.toggle('hidden', !on); const btn = $('#term-wechat'); if (btn) btn.classList.toggle('on', on); },
 };
 
+// ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
+// 三层：① AGENT_REGISTRY 内置 11 个主流 agent（图标在 /assets/agents/）
+//      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
+//      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
+// app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
+const AGENT_REGISTRY = [
+  { id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions', bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code' },
+  { id: 'codex', label: 'Codex', cmd: 'codex', bin: 'codex', install: 'npm install -g @openai/codex' },
+  { id: 'hermes', label: 'Hermes Agent', cmd: 'hermes', bin: 'hermes', install: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' },
+  { id: 'openclaw', label: 'OpenClaw', cmd: 'openclaw', bin: 'openclaw', install: 'npm install -g openclaw' },
+  { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', bin: 'kimi', install: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash' },
+  { id: 'zcode', label: 'ZCode', cmd: 'open -a ZCode', app: 'ZCode', install: 'https://zcode.z.ai （桌面应用，官网下载 dmg）' },
+  { id: 'opencode', label: 'opencode', cmd: 'opencode', bin: 'opencode', install: 'curl -fsSL https://opencode.ai/install | bash' },
+  { id: 'pi', label: 'pi', cmd: 'pi', bin: 'pi', install: 'curl -fsSL https://pi.dev/install.sh | sh' },
+  { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
+  { id: 'workbuddy', label: 'WorkBuddy', cmd: 'open -a WorkBuddy', app: 'WorkBuddy', install: 'https://codebuddy.cn/work （桌面应用，官网下载）' },
+  { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
+];
+const AGENT_DEFAULTS = ['claude', 'codex'];
+const agentState = { enabled: null, custom: [] };
+const agentIconCache = new Map();
+
+async function agentIconHtml(id) {
+  const key = String(id).replace(/[^\w-]/g, '');
+  if (agentIconCache.has(key)) return agentIconCache.get(key);
+  let html = '';
+  try {
+    const r = await fetch(`/assets/agents/${key}.svg`);
+    if (r.ok) { const t = (await r.text()).trim(); if (t.startsWith('<svg') || t.startsWith('<?xml')) html = t; }
+  } catch { /* 没图标走缩写兜底 */ }
+  if (!html) {
+    try {
+      const r = await fetch(`/assets/agents/${key}.png`, { method: 'HEAD' });
+      if (r.ok) html = `<img src="/assets/agents/${key}.png" alt="">`;
+    } catch { /* 同上 */ }
+  }
+  agentIconCache.set(key, html);
+  return html;
+}
+
+async function loadAgents() {
+  try {
+    const r = await api('/api/agents');
+    agentState.enabled = Array.isArray(r.enabled) && r.enabled.length ? r.enabled : null;
+    agentState.custom = Array.isArray(r.custom) ? r.custom : [];
+  } catch { agentState.enabled = null; agentState.custom = []; }
+}
+
+// 生效的按钮清单：面板勾选管显隐；custom 同 id 只覆盖 label/cmd，不影响显隐；custom 新 id 恒显示追加在后
+function activeAgents() {
+  const on = new Set(agentState.enabled || AGENT_DEFAULTS);
+  const byId = new Map(agentState.custom.filter((a) => a && a.id && typeof a.cmd === 'string' && a.cmd).map((a) => [String(a.id), a]));
+  const list = [];
+  for (const a of AGENT_REGISTRY) {
+    const ov = byId.get(a.id); byId.delete(a.id);
+    if (!on.has(a.id)) continue;
+    list.push(ov ? { ...a, label: ov.label || a.label, cmd: ov.cmd } : a);
+  }
+  for (const [id, a] of byId) list.push({ id, label: a.label || id, cmd: a.cmd });
+  return list;
+}
+
+async function renderAgentButtons() {
+  const anchor = $('#agent-config');
+  anchor.parentElement.querySelectorAll('button[data-agent]').forEach((b) => b.remove());
+  for (const a of activeAgents()) {
+    const b = document.createElement('button');
+    b.className = 'agent-launch';
+    b.dataset.agent = a.id;
+    b.id = 'term-' + String(a.id).replace(/[^\w-]/g, '');
+    b.title = a.app ? `打开 ${a.label} 桌面应用（该产品无终端 CLI 形态）` : `启动 ${a.label}：空闲终端就地启动，正跑着任务则新开标签`;
+    b.innerHTML = (await agentIconHtml(a.id)) || `<span class="agent-abbr">${escapeHtml(String(a.label || a.id).slice(0, 2))}</span>`;
+    b.onclick = () => { wechatView.close(); term.launchAgent(a.cmd); };
+    anchor.parentElement.insertBefore(b, anchor);
+  }
+}
+
+// 设置面板：勾选即生效；未安装的显示「未装」，点它复制安装命令
+const agentsPop = {
+  el: null, which: null,
+  toggle() { if (this.el) this.close(); else this.open(); },
+  close() { if (!this.el) return; this.el.remove(); this.el = null; document.removeEventListener('mousedown', this._out, true); },
+  open() {
+    const on = new Set(agentState.enabled || AGENT_DEFAULTS);
+    const pop = document.createElement('div');
+    pop.className = 'agents-pop';
+    pop.innerHTML = `<div class="ap-head">一键启动的 coding agent</div>
+      <div class="ap-list">${AGENT_REGISTRY.map((a) => `
+        <label class="ap-row" data-id="${a.id}">
+          <input type="checkbox" ${on.has(a.id) ? 'checked' : ''}>
+          <span class="ap-ic" data-ic="${a.id}"></span>
+          <span class="ap-name">${escapeHtml(a.label)}</span>
+          <span class="ap-flag" data-flag="${a.id}"></span>
+        </label>`).join('')}</div>
+      <div class="ap-foot">勾选即生效 · 点「未装」复制安装命令<br>高级：~/.fanbox/config.json 的 agents 数组可自定义命令 / 加新 agent</div>`;
+    document.body.appendChild(pop);
+    const r = $('#agent-config').getBoundingClientRect();
+    pop.style.top = Math.round(r.bottom + 6) + 'px';
+    pop.style.right = Math.max(8, Math.round(window.innerWidth - r.right - 8)) + 'px';
+    this.el = pop;
+    AGENT_REGISTRY.forEach(async (a) => { const el = pop.querySelector(`[data-ic="${a.id}"]`); const ic = await agentIconHtml(a.id); if (el) el.innerHTML = ic || `<span class="agent-abbr">${escapeHtml(a.label.slice(0, 2))}</span>`; });
+    this.markInstalled(pop);
+    pop.querySelectorAll('.ap-row input').forEach((cb) => {
+      cb.onchange = async () => {
+        const ids = [...pop.querySelectorAll('.ap-row input:checked')].map((x) => x.closest('.ap-row').dataset.id);
+        agentState.enabled = ids.length ? ids : null;
+        renderAgentButtons();
+        try { await apiPost('/api/agents', { enabled: ids }); } catch { toast('保存失败', true); }
+      };
+    });
+    this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
+    document.addEventListener('mousedown', this._out, true);
+  },
+  async markInstalled(pop) {
+    if (!this.which) {
+      const bins = AGENT_REGISTRY.filter((a) => a.bin).map((a) => a.bin).join(',');
+      const apps = AGENT_REGISTRY.filter((a) => a.app).map((a) => a.app).join(',');
+      try { this.which = await api(`/api/agents/which?bins=${bins}&apps=${encodeURIComponent(apps)}`); } catch { this.which = {}; return; }
+    }
+    for (const a of AGENT_REGISTRY) {
+      const f = pop.querySelector(`[data-flag="${a.id}"]`);
+      if (!f || this.which[a.bin || a.app] !== false) continue;
+      f.textContent = '未装';
+      f.title = '点击复制安装命令：' + a.install;
+      f.onclick = (ev) => { ev.preventDefault(); navigator.clipboard.writeText(a.install).then(() => toast('已复制安装命令')); };
+    }
+  },
+};
+
+async function bindAgentButtons() {
+  $('#agent-config').onclick = () => agentsPop.toggle();
+  await loadAgents();
+  await renderAgentButtons();
+}
+
 // ---------- 事件绑定 ----------
 function bindEvents() {
   // 顶栏窄时分级藏低频控件（观测自身宽度而非视口——侧栏会吃掉一截且可折叠）
@@ -2447,6 +2582,13 @@ function bindEvents() {
     tb.classList.toggle('tb-xxs', w < 790);
     tb.classList.toggle('tb-min', w < 660);
   }).observe(tb);
+  // 文件区被终端/预览压窄时，列表列让位：名称优先，先藏「大小」再藏「修改时间」（#49）
+  const fa = $('#file-area');
+  new ResizeObserver((es) => {
+    const w = es[0].contentRect.width;
+    fa.classList.toggle('fa-narrow', w < 620);
+    fa.classList.toggle('fa-tight', w < 460);
+  }).observe(fa);
   // ←/↑ 顶栏按钮已删（与面包屑功能重复、且和 macOS 红绿灯冲突）；后退/上一级保留 ⌘[ 和 Backspace 快捷键
   $('#preview-close').onclick = closePreview;
   $('#cmdk-trigger').onclick = () => cmdk.open();
@@ -2456,8 +2598,7 @@ function bindEvents() {
   // 启动时点一下连接状态，连着就给终端里的微信按钮点绿点（不挡初始化）
   if (window.fanboxWechat) window.fanboxWechat.env().then((e) => wechatView.syncDot(!!(e && e.connected))).catch(() => {});
   $('#btn-terminal').onclick = () => term.toggle();
-  $('#term-claude').onclick = () => { wechatView.close(); term.launchAgent('claude --dangerously-skip-permissions'); };
-  $('#term-codex').onclick = () => { wechatView.close(); term.launchAgent('codex'); };
+  bindAgentButtons();
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
@@ -4701,12 +4842,34 @@ function bindUpdateNotice() {
       : '';
     const bar = document.createElement('div');
     bar.className = 'update-pill';
-    bar.innerHTML = `<span>${escapeHtml(label)}</span><button class="up-go">${escapeHtml(action)}</button>${secondaryHtml}<button class="up-x" title="这个版本不再提醒">✕</button>`;
+    const canDl = kind === 'source'
+      && window.fanboxEnv && window.fanboxEnv.platform === 'darwin'
+      && typeof window.fanboxUpdate.download === 'function'
+      && /^\d+\.\d+\.\d+$/.test(String(m.version));
+    const primaryHtml = canDl
+      ? '<button class="up-go up-dl">下载更新</button><button class="up-page">发布页</button>'
+      : `<button class="up-go">${escapeHtml(action)}</button>`;
+    bar.innerHTML = `<span class="up-msg">${escapeHtml(canDl ? `新版本 v${m.version} 已发布` : label)}</span>${primaryHtml}${secondaryHtml}<button class="up-x" title="这个版本不再提醒">✕</button>`;
     document.body.appendChild(bar);
-    bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(m.url); bar.remove(); };
+    let offProgress = null;
+    const dl = bar.querySelector('.up-dl');
+    if (dl) {
+      dl.onclick = async () => {
+        dl.disabled = true; dl.textContent = '下载中…';
+        const r = await window.fanboxUpdate.download(m.version).catch(() => ({ ok: false }));
+        if (r && r.ok) { bar.querySelector('.up-msg').textContent = '已下载并打开 dmg，拖进 Applications 完成更新'; dl.remove(); if (offProgress) { offProgress(); offProgress = null; } }
+        else { dl.disabled = false; dl.textContent = '下载更新'; toast('下载失败，去发布页手动下吧', true); }
+      };
+      if (window.fanboxUpdate.onProgress) offProgress = window.fanboxUpdate.onProgress((p) => {
+        if (p.state === 'downloading' && dl.disabled) dl.textContent = p.pct >= 0 ? `下载中 ${p.pct}%` : '下载中…';
+      });
+      bar.querySelector('.up-page').onclick = () => window.fanboxUpdate.open(m.url);
+    } else {
+      bar.querySelector('.up-go').onclick = () => { window.fanboxUpdate.open(m.url); bar.remove(); };
+    }
     const alt = bar.querySelector('.up-alt');
     if (alt) alt.onclick = () => { window.fanboxUpdate.open(secondary.url); };
-    bar.querySelector('.up-x').onclick = () => { localStorage.setItem('fb_skip_ver', skipKey); bar.remove(); };
+    bar.querySelector('.up-x').onclick = () => { if (offProgress) offProgress(); localStorage.setItem('fb_skip_ver', skipKey); bar.remove(); };
   };
   window.fanboxUpdate.onAvailable(show);
   // 主进程启动 6 秒就推送，init 加载大目录时这里可能还没注册监听——补拉一次，错过的推送不丢
