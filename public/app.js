@@ -71,6 +71,20 @@ window.__svgImg = svgWrap(SVG.image, KIND_COLOR.image, 34);
 function iconColorFor(e) {
   const ex = (e.name.split('.').pop() || '').toLowerCase();
   const t = state.theme;
+  if (t === 'catppuccin-latte') {
+    if (e.isDir) return '#8839ef';
+    if (['md', 'markdown', 'txt', 'pdf'].includes(ex)) return '#1e66f5';
+    if (['csv', 'tsv', 'sql'].includes(ex) || e.kind === 'data') return '#40a02b';
+    if (['html', 'htm', 'css', 'scss'].includes(ex)) return '#d20f39';
+    return '#6c6f85';
+  }
+  if (t && t.startsWith('catppuccin-')) {
+    if (e.isDir) return '#cba6f7';
+    if (['md', 'markdown', 'txt', 'pdf'].includes(ex)) return '#89b4fa';
+    if (['csv', 'tsv', 'sql'].includes(ex) || e.kind === 'data') return '#a6e3a1';
+    if (['html', 'htm', 'css', 'scss'].includes(ex)) return '#f38ba8';
+    return '#a6adc8';
+  }
   if (t === 'warm') {
     if (e.isDir) return '#c0714f';
     if (['md', 'markdown', 'txt', 'pdf'].includes(ex)) return '#a0895c';
@@ -182,9 +196,32 @@ function richIcon(e, size) {
 window.__svgImg = richIcon({ name: '_.jpg', kind: 'image' }, 40);
 window.__svgVideo = richIcon({ name: '_.mp4', kind: 'video' }, 40);
 
+const THEMES = [
+  { id: 'warm', label: '档案', family: 'FanBox', tone: 'light', hljs: 'github', monaco: 'fb-paper', swatches: ['#f5f0e8', '#cc785c', '#1a1a18'] },
+  { id: 'terminal', label: '终端', family: 'FanBox', tone: 'dark', hljs: 'github-dark', monaco: 'fb-dark', swatches: ['#0b0c0a', '#cdf24b', '#f2f2ea'] },
+  { id: 'editorial', label: '索引', family: 'FanBox', tone: 'light', hljs: 'github', monaco: 'fb-editorial', swatches: ['#f4f1ea', '#ff433d', '#0a0a0a'] },
+  { id: 'catppuccin-latte', label: 'Latte', family: 'Catppuccin', tone: 'light', hljs: 'github', monaco: 'fb-catppuccin-latte', swatches: ['#eff1f5', '#8839ef', '#4c4f69'] },
+  { id: 'catppuccin-frappe', label: 'Frappe', family: 'Catppuccin', tone: 'dark', hljs: 'github-dark', monaco: 'fb-catppuccin-frappe', swatches: ['#303446', '#ca9ee6', '#c6d0f5'] },
+  { id: 'catppuccin-macchiato', label: 'Macchiato', family: 'Catppuccin', tone: 'dark', hljs: 'github-dark', monaco: 'fb-catppuccin-macchiato', swatches: ['#24273a', '#c6a0f6', '#cad3f5'] },
+  { id: 'catppuccin-mocha', label: 'Mocha', family: 'Catppuccin', tone: 'dark', hljs: 'github-dark', monaco: 'fb-catppuccin-mocha', swatches: ['#1e1e2e', '#cba6f7', '#cdd6f4'] },
+];
+function themeMeta(id) { return THEMES.find((t) => t.id === id) || THEMES.find((t) => t.id === 'terminal'); }
+function isThemeId(id) { return THEMES.some((t) => t.id === id); }
+function themeToneLabel(tone) { return tone === 'dark' ? '暗色' : '亮色'; }
+
+const FONT_FIELDS = [
+  { key: 'ui', css: '--font-ui', label: '界面字体', hint: '按钮、侧栏、面板', sample: 'FanBox 设置' },
+  { key: 'display', css: '--font-display', label: '标题字体', hint: '品牌、面包屑、预览标题', sample: '项目标题' },
+  { key: 'mono', css: '--font-mono', label: '代码字体', hint: 'Monaco 编辑器和代码块', sample: 'const theme = "Catppuccin";' },
+  { key: 'term', css: '--font-term', label: '终端字体', hint: '内嵌终端和录像回放', sample: '$ fanbox start' },
+  { key: 'fname', css: '--font-fname', label: '文件名字体', hint: '网格与列表文件名', sample: 'settings.theme.json' },
+];
+const FONT_STORAGE_KEY = 'fb_fonts';
+const DEFAULT_THEME_ID = 'warm';
+
 const state = {
   cwd: null, home: null, platform: 'darwin', sep: '/',
-  theme: localStorage.getItem('fb_theme') || 'warm',
+  theme: localStorage.getItem('fb_theme') || DEFAULT_THEME_ID,
   entries: [], project: null, history: [],
   view: localStorage.getItem('fb_view') || 'grid',
   gridSize: localStorage.getItem('fb_gridsize') || 'sm',
@@ -199,6 +236,7 @@ const state = {
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
   changeLog: [], // 本会话 agent 改过的文件（跨所有监听目录，按文件去重、最新置顶），供「变更」面板回看
   changeTimeline: [], // 每一次写入事件（不去重，带时间戳），供「会话回放」拖时间轴重现
+  fonts: {},
 };
 
 // ---------- 工具 ----------
@@ -1538,6 +1576,214 @@ function confirmDialog(msg) {
     ov.querySelector('[data-act=yes]').focus();
   });
 }
+
+// ---------- 设置 / 外观 ----------
+function cleanFontFamily(value) {
+  return String(value || '')
+    .replace(/[\r\n;]/g, ' ')
+    .replace(/[{}<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+}
+function loadFontPrefs() {
+  try {
+    const data = JSON.parse(localStorage.getItem(FONT_STORAGE_KEY) || '{}');
+    const next = {};
+    FONT_FIELDS.forEach((f) => {
+      const v = cleanFontFamily(data[f.key]);
+      if (v) next[f.key] = v;
+    });
+    state.fonts = next;
+  } catch {
+    state.fonts = {};
+  }
+  return state.fonts;
+}
+function currentCssFont(cssVar) {
+  return getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+}
+function applyFontPrefs(prefs = state.fonts) {
+  const root = document.documentElement;
+  FONT_FIELDS.forEach((f) => {
+    const v = cleanFontFamily(prefs[f.key]);
+    if (v) root.style.setProperty(f.css, v);
+    else root.style.removeProperty(f.css);
+  });
+  refreshRuntimeFonts();
+}
+function saveFontPrefs() {
+  const clean = {};
+  FONT_FIELDS.forEach((f) => {
+    const v = cleanFontFamily(state.fonts[f.key]);
+    if (v) clean[f.key] = v;
+  });
+  state.fonts = clean;
+  if (Object.keys(clean).length) localStorage.setItem(FONT_STORAGE_KEY, JSON.stringify(clean));
+  else localStorage.removeItem(FONT_STORAGE_KEY);
+}
+function setFontSample(row, field, value) {
+  const sample = row?.querySelector('.font-sample');
+  if (!sample || !field) return;
+  const v = cleanFontFamily(value);
+  sample.style.setProperty('font-family', v || `var(${field.css})`);
+}
+function syncFontSamples(root = document) {
+  root.querySelectorAll('[data-font-key]').forEach((input) => {
+    const field = FONT_FIELDS.find((f) => f.key === input.dataset.fontKey);
+    setFontSample(input.parentElement, field, state.fonts[field?.key] || '');
+  });
+}
+function refreshRuntimeFonts() {
+  const mono = currentCssFont('--font-mono') || 'monospace';
+  const termFont = currentCssFont('--font-term') || 'monospace';
+  try {
+    if (typeof mona !== 'undefined' && mona.editor) mona.editor.updateOptions({ fontFamily: mono });
+  } catch { /* Monaco may be a disposed diff editor */ }
+  try {
+    if (typeof term !== 'undefined') {
+      term.sessions.forEach((s) => {
+        try {
+          s.xterm.options.fontFamily = termFont;
+          s.webgl?.clearTextureAtlas?.();
+          if (s.fit) requestAnimationFrame(() => { try { s.fit.fit(); } catch { /* */ } });
+        } catch { /* ignore closed sessions */ }
+      });
+    }
+  } catch { /* terminal unavailable in browser */ }
+  try {
+    if (typeof player !== 'undefined' && player.xterm) {
+      player.xterm.options.fontFamily = termFont;
+      player.rescale();
+    }
+  } catch { /* replay may be closed */ }
+}
+function resetFontPrefs({ silent = false } = {}) {
+  state.fonts = {};
+  localStorage.removeItem(FONT_STORAGE_KEY);
+  FONT_FIELDS.forEach((f) => document.documentElement.style.removeProperty(f.css));
+  refreshRuntimeFonts();
+  document.querySelectorAll('[data-font-key]').forEach((input) => {
+    input.value = '';
+    const field = FONT_FIELDS.find((f) => f.key === input.dataset.fontKey);
+    setFontSample(input.parentElement, field, '');
+  });
+  if (!silent) toast('已恢复默认字体');
+}
+function resetAppearancePrefs() {
+  resetFontPrefs({ silent: true });
+  applyTheme(DEFAULT_THEME_ID);
+  toast('已恢复默认外观');
+}
+function swatchHtml(theme) {
+  return (theme.swatches || []).map((c) => `<i style="background:${escapeHtml(c)}"></i>`).join('');
+}
+function renderThemeButton(theme) {
+  const active = state.theme === theme.id ? ' active' : '';
+  return `<button class="settings-theme${active}" data-theme-id="${escapeHtml(theme.id)}" aria-pressed="${state.theme === theme.id ? 'true' : 'false'}">
+    <span class="settings-theme-top">
+      <span><b>${escapeHtml(theme.label)}</b><em>${escapeHtml(theme.family)}</em></span>
+      <small>${themeToneLabel(theme.tone)}</small>
+    </span>
+    <span class="theme-swatches" aria-hidden="true">${swatchHtml(theme)}</span>
+  </button>`;
+}
+function renderFontRow(field) {
+  const value = state.fonts[field.key] || '';
+  return `<label class="font-row">
+    <span class="font-label">
+      <b>${escapeHtml(field.label)}</b>
+      <em>${escapeHtml(field.hint)}</em>
+    </span>
+    <input data-font-key="${escapeHtml(field.key)}" value="${escapeHtml(value)}" placeholder="留空使用当前主题默认字体" spellcheck="false" autocomplete="off">
+    <span class="font-sample">${escapeHtml(field.sample)}</span>
+  </label>`;
+}
+function openSettings() {
+  closeSettings();
+  const ov = document.createElement('div');
+  ov.className = 'settings-overlay';
+  ov.innerHTML = `<section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="settings-head">
+      <div>
+        <div class="settings-kicker">设置</div>
+        <h2 id="settings-title">外观</h2>
+      </div>
+      <button class="settings-close" data-settings-close title="关闭">✕</button>
+    </header>
+    <div class="settings-body">
+      <aside class="settings-rail" aria-label="设置分类">
+        <button class="active" type="button">外观</button>
+      </aside>
+      <div class="settings-content">
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <h3>主题</h3>
+            <p>选择后立即生效，自动保存到本机。</p>
+          </div>
+          <div class="settings-theme-grid">${THEMES.map(renderThemeButton).join('')}</div>
+        </section>
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <h3>字体</h3>
+            <p>输入字体族名称或字体栈，留空则跟随主题默认值。</p>
+          </div>
+          <div class="font-form">${FONT_FIELDS.map(renderFontRow).join('')}</div>
+        </section>
+      </div>
+    </div>
+    <footer class="settings-foot">
+      <button class="ghost-btn settings-reset" data-settings-reset>恢复默认</button>
+      <button class="primary settings-done" data-settings-close>关闭</button>
+    </footer>
+  </section>`;
+  document.body.appendChild(ov);
+  syncFontSamples(ov);
+  const done = () => closeSettings();
+  ov.querySelectorAll('[data-settings-close]').forEach((b) => { b.onclick = done; });
+  ov.onclick = (ev) => { if (ev.target === ov) done(); };
+  ov.addEventListener('click', (ev) => {
+    const themeBtn = ev.target.closest('[data-theme-id]');
+    if (themeBtn) {
+      applyTheme(themeBtn.dataset.themeId);
+      ov.querySelectorAll('[data-theme-id]').forEach((b) => {
+        const on = b.dataset.themeId === state.theme;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      return;
+    }
+    if (ev.target.closest('[data-settings-reset]')) resetAppearancePrefs();
+  });
+  ov.addEventListener('input', (ev) => {
+    const input = ev.target.closest('[data-font-key]');
+    if (!input) return;
+    const field = FONT_FIELDS.find((f) => f.key === input.dataset.fontKey);
+    if (!field) return;
+    const v = cleanFontFamily(input.value);
+    state.fonts[field.key] = v;
+    saveFontPrefs();
+    applyFontPrefs(state.fonts);
+    setFontSample(input.parentElement, field, v);
+  });
+  function onKey(ev) {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      done();
+    }
+  }
+  ov._settingsKey = onKey;
+  document.addEventListener('keydown', onKey, true);
+  setTimeout(() => (ov.querySelector('[data-theme-id].active') || ov.querySelector('[data-theme-id]'))?.focus(), 0);
+}
+function closeSettings() {
+  const old = document.querySelector('.settings-overlay');
+  if (!old) return;
+  if (old._settingsKey) document.removeEventListener('keydown', old._settingsKey, true);
+  old.remove();
+}
+
 // ---------- 截图直通车：系统截屏落盘 → 右下角浮出直通卡，终端/素材/标注一步到位 ----------
 const shotTray = {
   el: null, timer: null,
@@ -2776,13 +3022,19 @@ function updateGridSizeVisibility() {
 
 // ---------- 主题 / 皮肤 ----------
 function applyTheme(skin, rerender = true) {
-  if (!['terminal', 'warm', 'editorial'].includes(skin)) skin = 'terminal';
+  if (!isThemeId(skin)) skin = 'terminal';
+  const meta = themeMeta(skin);
   state.theme = skin;
   document.documentElement.dataset.theme = skin;
   localStorage.setItem('fb_theme', skin);
   const link = document.getElementById('hljs-theme');
-  if (link) link.href = '/vendor/hljs/styles/' + (skin === 'terminal' ? 'github-dark' : 'github') + '.min.css';
+  if (link) link.href = '/vendor/hljs/styles/' + meta.hljs + '.min.css';
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => b.classList.toggle('active', b.dataset.skin === skin));
+  document.querySelectorAll('[data-theme-id]').forEach((b) => {
+    const on = b.dataset.themeId === skin;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
   if (typeof term !== 'undefined' && term.sessions.length) term.retheme();
   if (typeof mona !== 'undefined') mona.retheme();
   if (rerender && state.entries.length) {
@@ -3148,6 +3400,26 @@ const term = {
       background: '#eae5d8', foreground: '#1a1a1a', cursor: '#ff433d', cursorAccent: '#eae5d8', selectionBackground: '#ff433d22',
       black: '#0a0a0a', red: '#cc1f1a', green: '#00803a', yellow: '#8a6d00', blue: '#0000cc', magenta: '#9a2a8a', cyan: '#007a8a', white: '#57534a',
       brightBlack: '#57534a', brightRed: '#e8302a', brightGreen: '#00a33e', brightYellow: '#a67c00', brightBlue: '#2222dd', brightMagenta: '#b03aa0', brightCyan: '#008a9a', brightWhite: '#0a0a0a',
+    },
+    'catppuccin-latte': {
+      background: '#eff1f5', foreground: '#4c4f69', cursor: '#8839ef', cursorAccent: '#eff1f5', selectionBackground: '#8839ef30',
+      black: '#5c5f77', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d', blue: '#1e66f5', magenta: '#8839ef', cyan: '#179299', white: '#acb0be',
+      brightBlack: '#6c6f85', brightRed: '#d20f39', brightGreen: '#40a02b', brightYellow: '#df8e1d', brightBlue: '#1e66f5', brightMagenta: '#8839ef', brightCyan: '#179299', brightWhite: '#bcc0cc',
+    },
+    'catppuccin-frappe': {
+      background: '#303446', foreground: '#c6d0f5', cursor: '#ca9ee6', cursorAccent: '#303446', selectionBackground: '#ca9ee640',
+      black: '#51576d', red: '#e78284', green: '#a6d189', yellow: '#e5c890', blue: '#8caaee', magenta: '#ca9ee6', cyan: '#81c8be', white: '#b5bfe2',
+      brightBlack: '#626880', brightRed: '#e78284', brightGreen: '#a6d189', brightYellow: '#e5c890', brightBlue: '#8caaee', brightMagenta: '#ca9ee6', brightCyan: '#81c8be', brightWhite: '#c6d0f5',
+    },
+    'catppuccin-macchiato': {
+      background: '#24273a', foreground: '#cad3f5', cursor: '#c6a0f6', cursorAccent: '#24273a', selectionBackground: '#c6a0f640',
+      black: '#494d64', red: '#ed8796', green: '#a6da95', yellow: '#eed49f', blue: '#8aadf4', magenta: '#c6a0f6', cyan: '#8bd5ca', white: '#b8c0e0',
+      brightBlack: '#5b6078', brightRed: '#ed8796', brightGreen: '#a6da95', brightYellow: '#eed49f', brightBlue: '#8aadf4', brightMagenta: '#c6a0f6', brightCyan: '#8bd5ca', brightWhite: '#cad3f5',
+    },
+    'catppuccin-mocha': {
+      background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#cba6f7', cursorAccent: '#1e1e2e', selectionBackground: '#cba6f740',
+      black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa', magenta: '#cba6f7', cyan: '#94e2d5', white: '#bac2de',
+      brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#cba6f7', brightCyan: '#94e2d5', brightWhite: '#cdd6f4',
     },
   },
   theme() { return this.themes[state.theme] || this.themes.terminal; },
@@ -3796,7 +4068,7 @@ const term = {
   },
   // 换主题后 WebGL 图集里缓存的还是旧配色字形，且 CJK 宽字符偶发图集损坏（#37/#45）：清一次图集强制重栅格化。
   // try/catch 兜住 GPU 故障，别让单个 session 的渲染异常连累其它 session 或拖垮渲染进程（#35）。
-  retheme() { const th = this.theme(); this.sessions.forEach((s) => { try { s.xterm.options.theme = th; s.webgl?.clearTextureAtlas?.(); } catch { /* */ } }); },
+  retheme() { const th = this.theme(); this.sessions.forEach((s) => { try { s.xterm.options.theme = th; s.xterm.options.fontFamily = currentCssFont('--font-term') || 'monospace'; s.webgl?.clearTextureAtlas?.(); } catch { /* */ } }); },
 };
 
 // ---------- Agent 用量面板（侧栏常驻，可开合）----------
@@ -4085,8 +4357,7 @@ async function invokeSkillInTerm(name) {
 // ---------- Monaco 编辑器（本地 vendor，离线可用；加载失败回退 textarea）----------
 const mona = {
   editor: null, _p: null,
-  themeFor: { terminal: 'fb-dark', warm: 'fb-paper', editorial: 'fb-editorial' },
-  themeName() { return this.themeFor[state.theme] || 'fb-dark'; },
+  themeName() { return themeMeta(state.theme).monaco || 'fb-dark'; },
   // 散文类（md/txt/字幕）默认软换行，代码不换行
   wraps(ex) { return ['md', 'markdown', 'txt', 'log', 'srt', 'vtt', 'ass'].includes(ex); },
   lang(ex) {
@@ -4130,6 +4401,10 @@ const mona = {
     m.editor.defineTheme('fb-dark', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#0b0c0a', 'editor.foreground': '#d6dac9', 'editorLineNumber.foreground': '#4a4d42', 'editorCursor.foreground': '#cdf24b', 'editor.selectionBackground': '#cdf24b33', 'editor.lineHighlightBackground': '#ffffff08' } });
     m.editor.defineTheme('fb-paper', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#ece2d2', 'editor.foreground': '#4a3f30', 'editorLineNumber.foreground': '#b3a589', 'editorCursor.foreground': '#cc785c', 'editor.selectionBackground': '#cc785c33', 'editor.lineHighlightBackground': '#00000008' } });
     m.editor.defineTheme('fb-editorial', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#eae5d8', 'editor.foreground': '#1a1a1a', 'editorLineNumber.foreground': '#9a958a', 'editorCursor.foreground': '#ff433d', 'editor.selectionBackground': '#ff433d22', 'editor.lineHighlightBackground': '#00000008' } });
+    m.editor.defineTheme('fb-catppuccin-latte', { base: 'vs', inherit: true, rules: [], colors: { 'editor.background': '#eff1f5', 'editor.foreground': '#4c4f69', 'editorLineNumber.foreground': '#9ca0b0', 'editorCursor.foreground': '#8839ef', 'editor.selectionBackground': '#8839ef30', 'editor.lineHighlightBackground': '#ccd0da50', 'editorIndentGuide.background': '#ccd0da' } });
+    m.editor.defineTheme('fb-catppuccin-frappe', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#303446', 'editor.foreground': '#c6d0f5', 'editorLineNumber.foreground': '#737994', 'editorCursor.foreground': '#ca9ee6', 'editor.selectionBackground': '#ca9ee640', 'editor.lineHighlightBackground': '#41455970', 'editorIndentGuide.background': '#51576d' } });
+    m.editor.defineTheme('fb-catppuccin-macchiato', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#24273a', 'editor.foreground': '#cad3f5', 'editorLineNumber.foreground': '#6e738d', 'editorCursor.foreground': '#c6a0f6', 'editor.selectionBackground': '#c6a0f640', 'editor.lineHighlightBackground': '#363a4f70', 'editorIndentGuide.background': '#494d64' } });
+    m.editor.defineTheme('fb-catppuccin-mocha', { base: 'vs-dark', inherit: true, rules: [], colors: { 'editor.background': '#1e1e2e', 'editor.foreground': '#cdd6f4', 'editorLineNumber.foreground': '#6c7086', 'editorCursor.foreground': '#cba6f7', 'editor.selectionBackground': '#cba6f740', 'editor.lineHighlightBackground': '#31324470', 'editorIndentGuide.background': '#45475a' } });
   },
   retheme() { if (this.editor && window.monaco) window.monaco.editor.setTheme(this.themeName()); },
   // 只读并排 diff：HEAD 版本 vs 工作区当前内容，复用 editor 槽位让 disposeIfAny 统一回收
@@ -4785,6 +5060,8 @@ async function init() {
   // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
   if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) document.documentElement.classList.add('desktop');
   try { window.fanboxWin?.trafficLights(true); } catch { /* 重载后兜底恢复系统按钮，防上次全屏藏了没显回来 */ }
+  loadFontPrefs();
+  applyFontPrefs(state.fonts);
   applyTheme(state.theme, false);
   if (state.sidebarCollapsed) { $('#app').classList.add('sidebar-collapsed'); $('#btn-sidebar')?.classList.add('on'); }
   applyLayout();
@@ -4813,6 +5090,7 @@ async function init() {
     img.src = '/fs' + encodeURI(abs);
   }, true);
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => { b.onclick = () => applyTheme(b.dataset.skin); });
+  $('#settings-entry')?.addEventListener('click', openSettings);
   await loadRoots();
   await loadFavorites();
   loadAgentProjects();
