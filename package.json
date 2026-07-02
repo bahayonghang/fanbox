@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
@@ -17,9 +17,9 @@
     "test:platform": "node scripts/test-platform-shell.js && node scripts/test-platform-env.js && node scripts/test-server-platform.js && node scripts/test-platform-power.js && node scripts/test-platform-clipboard.js && node scripts/test-platform-update.js && node scripts/test-release-wizard.js && node scripts/test-conpty-smoke.js",
     "predist": "npm run check:vendor-patch",
     "predist:win": "npm run check:vendor-patch",
-    "dist": "electron-builder --mac --arm64",
+    "dist": "APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --arm64",
     "predist:x64": "npm run check:vendor-patch",
-    "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
+    "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
     "dist:win": "electron-builder --win --publish never"
   },
   "build": {
@@ -38,7 +38,8 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "identity": "Apple Development: chen yunfei (FG7WYU86RP)",
+      "identity": "chen yunfei (KQQ39VZPW6)",
+      "notarize": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
