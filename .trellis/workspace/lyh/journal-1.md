@@ -281,3 +281,37 @@ Closed the Windows-port parent task after adapter convergence, quality gates, an
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Settings UI theme and font customization
+
+**Date**: 2026-07-02
+**Task**: Settings UI theme and font customization
+**Branch**: `win-dev`
+
+### Summary
+
+Implemented the Appearance settings modal with Catppuccin themes, immediate auto-saved font preferences, restore defaults behavior, and verification evidence.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c218256` | (see git log) |
+| `ce915bc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
