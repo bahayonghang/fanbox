@@ -21,9 +21,30 @@ async function main() {
   assert.strictEqual(normalizeHomeEnv({ USERPROFILE: 'C:\\Users\\demo' }, 'win32').HOME, 'C:\\Users\\demo');
   assert.strictEqual(_test.chooseLaunchPath(['tool', 'tool.cmd', 'tool.exe'], 'win32'), 'tool.exe');
   assert.deepStrictEqual(_test.windowsLaunch('x.cmd', ['a b']).args, ['/d', '/s', '/c', '""x.cmd" "a b""']);
+  assert.deepStrictEqual(_test.defaultPtyShell({ SHELL: 'C:\\Tools\\custom-shell.exe' }, 'win32'), { shellPath: 'C:\\Tools\\custom-shell.exe', shellArgs: [] });
   assert.deepStrictEqual(_test.defaultPtyShell({}, 'win32'), { shellPath: 'powershell.exe', shellArgs: [] });
   assert.deepStrictEqual(_test.defaultPtyShell({}, 'darwin'), { shellPath: '/bin/zsh', shellArgs: ['-l'] });
   assert.deepStrictEqual(_test.defaultPtyShell({ SHELL: '/opt/homebrew/bin/fish' }, 'darwin'), { shellPath: '/opt/homebrew/bin/fish', shellArgs: ['-l'] });
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fanbox shell-'));
+  try {
+    const pathPwsh = path.join(tmp, 'pwsh.exe');
+    fs.writeFileSync(pathPwsh, '');
+    assert.strictEqual(_test.defaultPtyShell({ Path: tmp }, 'win32').shellPath, pathPwsh);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fanbox psroot-'));
+  try {
+    const programFiles = path.join(root, 'Program Files');
+    const standardPwsh = path.join(programFiles, 'PowerShell', '7', 'pwsh.exe');
+    fs.mkdirSync(path.dirname(standardPwsh), { recursive: true });
+    fs.writeFileSync(standardPwsh, '');
+    assert.strictEqual(_test.defaultPtyShell({ ProgramFiles: programFiles }, 'win32').shellPath, standardPwsh);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 
   const nodePath = await whichBin('node');
   assert.ok(nodePath, 'whichBin(node) should find node');
