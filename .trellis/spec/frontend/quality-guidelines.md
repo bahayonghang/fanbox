@@ -38,6 +38,68 @@
 - ✅ CSS 加到 `style.css`，类名 `kebab-case`，主题色走 CSS 变量。
 - ✅ `'use strict';` 顶部保留（`public/app.js:2`、`i18n.js`、`preload.js`）。
 
+## Scenario: Agent Launcher Terminal Tab Identity Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to `AGENT_REGISTRY`, `AGENT_DEFAULTS`, `agentIconHtml()`, `renderAgentButtons()`, `term.launchAgent()`, terminal session state, or terminal tab rendering.
+- This is a renderer state/rendering contract. Keep it in vanilla `public/app.js` and `public/style.css`; do not add a framework, type system, or frontend build step.
+
+### 2. Signatures
+
+- `term.launchAgent(agentOrCommand)`: accepts either an Agent object with `{ id, label, cmd }` or the legacy command string.
+- Terminal sessions may carry launcher-owned metadata: `sess.agentId` and `sess.agentLabel`.
+- `term.tabAgentIconHtml(sess) -> string`: returns a fixed-slot Agent icon/fallback for sessions with `agentId`, or `''` for plain shells.
+
+### 3. Contracts
+
+- Agent launcher buttons must pass the full Agent object (`term.launchAgent(a)`), not only `a.cmd`, so tab rendering can preserve Agent identity.
+- `term.launchAgent()` must normalize `cmd`, `id`, and `label` with the existing `cleanAgentCommand()`, `cleanAgentId()`, and `cleanAgentLabel()` helpers before launching or storing metadata.
+- Only sessions launched through Agent buttons get `agentId`. Plain terminals, `runInDir()`, and legacy string launches keep the generic terminal glyph.
+- Reusing an idle shell and opening a new terminal tab must both apply the Agent metadata before the launch command is written.
+- A dead Agent tab may keep its Agent icon while dead, but `respawn(sess)` starts a plain shell and must clear `agentId` / `agentLabel`.
+- Tab icons must reuse the existing `agentIconHtml()` / `agentIconCache` path and `public/assets/agents/` assets. Missing or custom icons fall back to escaped two-character text in the same fixed-size slot.
+
+### 4. Validation & Error Matrix
+
+- Empty Agent command -> show a toast and do not launch.
+- Missing built-in/custom icon asset -> show the compact abbreviation fallback; do not break tab rendering.
+- Icon not cached at first render -> show fallback immediately, load through `agentIconHtml()`, then re-render only if the session still exists.
+- Active terminal is busy -> open a new tab instead of writing the Agent command into a running foreground program.
+- Dead tab respawned by pressing Enter -> clear Agent metadata so the new shell is not mislabeled.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `renderAgentButtons()` calls `term.launchAgent(a)`, `term.launchAgent()` stores `sess.agentId`, and `renderTabs()` calls `tabAgentIconHtml(s)` before falling back to the generic terminal icon.
+- Base: `term.launchAgent('codex')` still launches a command for legacy callers, but it does not assign an Agent icon because there is no trusted Agent id.
+- Bad: `term.launchAgent(a.cmd)` drops the Agent identity; detecting Agent identity by terminal process name or user-typed text is also out of scope and can mislabel plain shells.
+
+### 6. Tests Required
+
+- Syntax: `node --check public/app.js`.
+- Static launcher contract: `node scripts/test-conpty-smoke.js` must assert the Agent object launch path, `sess.agentId` assignment, and `tabAgentIconHtml(s)`.
+- Repo gates: `just check` and `just test` after Agent launcher or terminal tab changes.
+- Manual Electron smoke for UI changes: start `just dev`, click Codex and Claude launcher buttons, confirm their tabs show brand icons while a plain terminal tab keeps the generic terminal glyph.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+b.onclick = () => term.launchAgent(a.cmd);
+```
+
+This launches the command but loses the Agent id before a terminal session can store it.
+
+#### Correct
+
+```js
+b.onclick = () => term.launchAgent(a);
+// launchAgent normalizes cmd/id/label, stores sess.agentId, then renderTabs()
+```
+
+Keep `AGENT_REGISTRY` as the source of truth and let tab rendering consume explicit launcher metadata.
+
 ---
 
 ## Testing Requirements

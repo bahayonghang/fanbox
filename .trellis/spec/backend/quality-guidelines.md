@@ -51,6 +51,7 @@
 - `npm run dist:win`: Windows package entry, invokes the electron-builder CLI for `--win`; it may preload a local quiet-log shim, but must preserve Windows packaging semantics and `--publish never`.
 - `npm run rebuild`: wrapper around `@electron/rebuild` for `node-pty`; on Windows it may retry only `MSB8040` Spectre-library failures with an explicit MSBuild `/p:SpectreMitigation=false` fallback.
 - `just check`, `just test`, `just build`, `just build-mac`, `just build-win`, `just ci`: repo-level cross-platform gates.
+- `build.extraResources`: copies runtime icon resources used by Electron after packaging. It must include `build/icon.ico -> icon.ico` and `build/icon.png -> icon.png` so `process.resourcesPath` can serve the app/window icon outside `app.asar`.
 
 ### 3. Contracts
 
@@ -62,6 +63,7 @@
 - `package.json` overrides Electron rebuild's bundled `@electron/node-gyp` with upstream `node-gyp@12.2.0` so Visual Studio 2026 / VS 18 is recognized while keeping `@electron/rebuild` 3.x and Node 20 CI compatibility.
 - The rebuild wrapper must first try upstream `electron-rebuild`. It may use the non-Spectre MSBuild fallback only for Windows `MSB8040` when the selected VS instance has no `VC/Tools/MSVC/*/lib/spectre` directory.
 - Quiet build wrappers may hide successful `electron-builder` noise such as repeated signing/no-signing lines, but failures must still print the underlying error. `FANBOX_BUILD_VERBOSE=1` restores full packaging output for debugging.
+- Runtime window icons are separate from installer icons. `build.win.icon = build/icon.ico` controls packaging metadata, but `electron/main.js` must still pass an explicit `BrowserWindow({ icon })` path on Windows/Linux and probe `process.resourcesPath` in packaged apps. Do not assume `build/` exists inside `app.asar`.
 
 ### 4. Validation & Error Matrix
 
@@ -73,6 +75,7 @@
 - `npm run rebuild` fails with `MSB8040` and no fallback -> the wrapper failed to detect the Spectre-library case or `node-pty` did not generate `build/binding.sln`; inspect `scripts/rebuild-node-pty.js` before changing upstream native module files.
 - macOS `dist` no longer equals `electron-builder --mac` -> packaging regression.
 - Windows `dist:win` no longer invokes electron-builder for `--win` -> packaging regression, even if the command is wrapped for quieter logging.
+- `build.win.icon` is correct but packaged `win-unpacked/resources/icon.ico` is missing -> installer metadata may look right while the running window/title-bar falls back to the Electron/default icon; add or fix `build.extraResources`.
 
 ### 5. Good/Base/Bad Cases
 
@@ -88,6 +91,8 @@
 - A Node config probe confirms `dist`, `dist:win`, `build.mac`, `build.dmg`, and `build.win`; `dist:win` must still include the local quiet logger and the electron-builder CLI `--win` invocation.
 - A package/justfile probe confirms `check:vendor-patch` is absent when `docs/06-vendor补丁.md` says there is no active vendor patch, and that no `predist*` or `just check` entry still calls it.
 - `git check-ignore -v build/icon.ico` confirms the icon is whitelisted.
+- `node scripts/test-windows-workflow.js` asserts `build.win.icon`, the runtime icon resource copy, the Windows AppUserModelID, packaged-resource probing, and `BrowserWindow({ icon })`.
+- For icon-related packaging changes, run a Windows package smoke into a temporary output directory and verify `win-unpacked/resources/icon.ico` and `win-unpacked/resources/icon.png` exist before deleting the temporary directory.
 - GitHub Actions on `windows-2022` must upload `dist/*.exe` and `dist/*.zip` for final Windows artifact proof.
 
 ### 7. Wrong vs Correct
