@@ -348,3 +348,36 @@ Implemented the Appearance settings modal with Catppuccin themes, immediate auto
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Merge master updates into win-dev
+
+**Date**: 2026-07-09
+**Task**: Merge master updates into win-dev
+**Branch**: `win-dev`
+
+### Summary
+
+Created Trellis task, merged origin/master into win-dev, resolved package/public app conflicts, preserved Windows packaging contracts, ran just ci, and archived the task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4a3bd0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
