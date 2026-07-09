@@ -1811,6 +1811,12 @@ function openSettings(pageId = 'appearance') {
       resetAppearancePrefs();
       return;
     }
+    const webgl = ev.target.closest('[data-terminal-webgl]');
+    if (webgl) {
+      term.setWebgl(webgl.checked);
+      toast(webgl.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）');
+      return;
+    }
     const enabled = ev.target.closest('[data-agent-enabled]');
     if (enabled) {
       await saveEnabledAgentsFromSettings(ov);
@@ -2969,12 +2975,25 @@ function renderAgentSettingsRow(a, enabledSet) {
 function renderAgentSettingsPage() {
   const enabledSet = new Set(Array.isArray(agentState.enabled) ? agentState.enabled : AGENT_DEFAULTS);
   const rows = agentCatalog().map((a) => renderAgentSettingsRow(a, enabledSet)).join('');
+  const webglEnabled = (() => { try { return localStorage.getItem('fanbox.noWebgl') !== '1'; } catch { return true; } })();
   return `<section class="settings-section">
     <div class="settings-section-head">
       <h3>一键启动 Agents</h3>
       <p>勾选控制终端工具栏按钮；启动命令保存后，下次点击 agent 按钮生效。</p>
     </div>
     <div class="agent-settings-list">${rows}</div>
+  </section>
+  <section class="settings-section">
+    <div class="settings-section-head">
+      <h3>终端渲染</h3>
+      <p>长时间中文输出偶发乱码时可关掉 WebGL，改用兼容渲染。</p>
+    </div>
+    <label class="agent-settings-row">
+      <div class="agent-settings-top">
+        <span class="agent-settings-name"><b>WebGL 加速渲染</b><em>关闭后立即切换 DOM renderer，稍慢但稳。</em></span>
+        <span class="agent-enable"><input type="checkbox" data-terminal-webgl ${webglEnabled ? 'checked' : ''}>启用</span>
+      </div>
+    </label>
   </section>`;
 }
 async function loadAgentInstallState() {
@@ -3927,21 +3946,6 @@ const term = {
       try { const U = window.Unicode11Addon.Unicode11Addon || window.Unicode11Addon; xterm.loadAddon(new U()); xterm.unicode.activeVersion = '11'; } catch { /* */ }
     }
     xterm.open(host);
-    // 滚动失同步自愈：DOM 滚动条已到底但 buffer 没到底，是 5.5.0 旧 Viewport 的 bug 签名
-    //（正常跟随输出时两者同步在底、用户上翻时 DOM 不在底，都不会触发），重算滚动区并到底
-    const vpEl = host.querySelector('.xterm-viewport');
-    if (vpEl) host.addEventListener('wheel', (ev) => {
-      if (ev.deltaY <= 0) return; // 只管「向下滚卡住」
-      requestAnimationFrame(() => { try {
-        const b = xterm.buffer.active;
-        if (b.type !== 'normal') return; // vim/htop 的 alt-screen 没有滚动条语义
-        const atDomBottom = vpEl.scrollTop + vpEl.clientHeight >= vpEl.scrollHeight - 2;
-        if (atDomBottom && b.viewportY < b.baseY) {
-          xterm._core.viewport?.syncScrollArea?.(true);
-          xterm.scrollToBottom();
-        }
-      } catch { /* 滚动中关标签：xterm 已 dispose，忽略 */ } });
-    }, { passive: true });
     // WebGL 渲染加速（大输出/TUI 不掉帧），失败或上下文丢失回退 DOM
     // 诊断开关：控制台跑 fbWebgl(false) 关掉 WebGL（用 DOM renderer）排查 CJK 残影乱码，fbWebgl(true) 恢复，需新开标签生效
     const webglOff = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })();
@@ -4168,9 +4172,6 @@ const term = {
     const s = this.sessions.find((x) => x.id === id);
     if (s) {
       this.fitActive();
-      // xterm 5.5.0 旧 Viewport 在 display:none 期间会把滚动区高度算矮一屏（上游 #5339，6.0 重写才修）；
-      // 重新可见后强制同步一次，否则滚轮到不了底部。升级 xterm 6.0 后删掉这行
-      requestAnimationFrame(() => { try { s.xterm._core.viewport?.syncScrollArea?.(true); } catch { /* */ } });
       setTimeout(() => s.xterm.focus(), 0);
       // 延迟刷新标题（避开双击窗口：双击的第二下若撞上 renderTabs 重建会丢 dblclick 事件）
       setTimeout(() => this.refreshCwd(s), 600);
@@ -4193,6 +4194,33 @@ const term = {
     const s = this.sessions.find((x) => x.id === this.active);
     if (!s || !s.fit) return;
     requestAnimationFrame(() => { try { s.fit.fit(); } catch { /* */ } });
+  },
+  // WebGL 字形图集保养：大量中文输出会撑满图集触发分页合并，上游 bug 让汉字画成别字碎片
+  //（拖拽窗口能复原＝resize 重建了图集）。忙时每 5 分钟、收工时距上次 >60s 主动重建，重画一帧无感。
+  // 图集按字体配置在标签间共享，单独清一个标签会让其他标签的字指向已清空的纹理（大面积丢字），
+  // 所以全局节流、到点后所有标签同一 tick 一起清：头一个清掉共享纹理，其余只重建自己的模型并重绘
+  atlasCare(now, eager) {
+    if (!this._atlasAt) { this._atlasAt = now; return; } // 刚启动图集是干净的，先记时间
+    if (now - this._atlasAt < (eager ? 60000 : 300000)) return;
+    this._atlasAt = now;
+    this.sessions.forEach((s) => { try { s.webgl?.clearTextureAtlas(); } catch { /* */ } });
+  },
+  // 兼容渲染模式：关 WebGL 改用 DOM renderer（无字形图集，从机制上杜绝中文乱码；大输出略慢）。
+  // 对所有已开标签立即生效；选择存 localStorage，新标签在创建处同样遵守
+  setWebgl(on) {
+    try { if (on) localStorage.removeItem('fanbox.noWebgl'); else localStorage.setItem('fanbox.noWebgl', '1'); } catch { /* */ }
+    this.sessions.forEach((s) => {
+      try {
+        if (!on && s.webgl) { s.webgl.dispose(); s.webgl = null; }
+        else if (on && !s.webgl && !window.__noWebgl && window.WebglAddon) {
+          const Wg = window.WebglAddon.WebglAddon || window.WebglAddon;
+          const wg = new Wg();
+          wg.onContextLoss(() => { try { wg.dispose(); } catch { /* */ } if (s.webgl === wg) s.webgl = null; });
+          s.xterm.loadAddon(wg);
+          s.webgl = wg;
+        }
+      } catch { /* 单个会话失败不拦其他 */ }
+    });
   },
   // 字体缩放：⌘+/⌘- 调整字号，⌘0 重置为默认 13px
   adjustFont(sess, delta) {
@@ -4248,6 +4276,7 @@ const term = {
       const now = Date.now(); let anyBusy = false;
       this.sessions.forEach((s) => {
         if (s.status !== 'busy') return;
+        this.atlasCare(now); // 忙满 5 分钟清一次图集，长中文输出中途也能自愈
         const quiet = now - (s.lastData || 0);
         if (quiet <= 2500) { anyBusy = true; return; } // claude/codex 忙碌心跳约 1s 一帧，容差太紧会闪断误报
         const tail = this.tailText(s);
@@ -4255,6 +4284,7 @@ const term = {
         if (quiet < 30000 && /esc to interrupt/i.test(tail)) { anyBusy = true; return; }
         const dur = (s.lastReal || 0) - (s.busyStart || 0); // 工时只数自发输出：回显续命不算，免得打字把琐碎回显养肥成「真任务」
         s.status = 'idle';
+        this.atlasCare(now, true); // 收工间隙兜底再清一次（距上次 >60s 才动手）
         this.renderTabs();
         this.refreshCwd(s); // 干完一段活，标题对齐终端真实目录
         // 阶段性收工不报喜：底部状态行还挂着后台任务（「1 shell, 1 monitor still running」/「· 1 shell ·」），
@@ -5412,7 +5442,8 @@ function bindUpdateNotice() {
   if (window.fanboxUpdate.get) window.fanboxUpdate.get().then((m) => { if (m) show(m); }).catch(() => {});
 }
 
-// 终端渲染器诊断开关：fbWebgl(false) 关 WebGL 用 DOM renderer 排查 CJK 残影，fbWebgl(true) 恢复。改完新开一个终端标签生效
-window.fbWebgl = (on) => { try { if (on) localStorage.removeItem('fanbox.noWebgl'); else localStorage.setItem('fanbox.noWebgl', '1'); } catch {} const off = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })(); console.log('[fanbox] WebGL ' + (off ? '已关闭（DOM renderer）' : '已开启') + '，请新开一个终端标签验证'); return !off; };
+// 终端渲染器诊断开关：fbWebgl(false) 关 WebGL 用 DOM renderer 排查 CJK 残影，fbWebgl(true) 恢复。
+// 与设置面板「WebGL 加速渲染」同一逻辑，对所有已开标签立即生效
+window.fbWebgl = (on) => { term.setWebgl(!!on); console.log('[fanbox] WebGL ' + (on ? '已开启' : '已关闭（DOM renderer 兼容渲染）') + '，已对所有终端标签生效'); return !!on; };
 
 init();

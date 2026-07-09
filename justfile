@@ -12,7 +12,6 @@ dev:
     npm run app
 
 check:
-    @npm --silent run check:vendor-patch
     @node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json ok')"
 
 test: check

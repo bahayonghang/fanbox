@@ -45,8 +45,8 @@
 
 ### 2. Signatures
 
-- `npm run check:vendor-patch`: Node-based check for the patched xterm IME key path. It must run on both Windows and macOS.
-- `npm run predist` and `npm run predist:win`: both delegate to `npm run check:vendor-patch`.
+- `npm run check:vendor-patch`: exists only while `docs/06-vendor补丁.md` says a manual vendor patch is active. After the xterm 6 upgrade retired the CapsLock IME patch, this script is intentionally absent and no build entry should call it.
+- `npm run predist` and `npm run predist:win`: may delegate to `npm run check:vendor-patch` only when that guard script exists; do not keep stale `predist*` hooks after the guarded vendor patch is retired.
 - `npm run dist`: macOS package entry, remains `electron-builder --mac`.
 - `npm run dist:win`: Windows package entry, invokes the electron-builder CLI for `--win`; it may preload a local quiet-log shim, but must preserve Windows packaging semantics and `--publish never`.
 - `npm run rebuild`: wrapper around `@electron/rebuild` for `node-pty`; on Windows it may retry only `MSB8040` Spectre-library failures with an explicit MSBuild `/p:SpectreMitigation=false` fallback.
@@ -57,6 +57,7 @@
 - `build.win.icon` points to tracked `build/icon.ico`; `.gitignore` must explicitly allow it.
 - `build.win.target` produces both `nsis` and `zip` artifacts.
 - `just build-win` runs `npm run rebuild` before `npm run dist:win` so `node-pty` is rebuilt for Electron.
+- `just check` must match the current package scripts. If `check:vendor-patch` is retired, `just check` must not call it.
 - Windows CI calls `npm ci` and then `just ci`; CI must not duplicate a separate hand-written build sequence.
 - `package.json` overrides Electron rebuild's bundled `@electron/node-gyp` with upstream `node-gyp@12.2.0` so Visual Studio 2026 / VS 18 is recognized while keeping `@electron/rebuild` 3.x and Node 20 CI compatibility.
 - The rebuild wrapper must first try upstream `electron-rebuild`. It may use the non-Spectre MSBuild fallback only for Windows `MSB8040` when the selected VS instance has no `VC/Tools/MSVC/*/lib/spectre` directory.
@@ -64,7 +65,8 @@
 
 ### 4. Validation & Error Matrix
 
-- xterm patch missing -> `npm run check:vendor-patch` fails before packaging.
+- Active xterm vendor patch missing -> `npm run check:vendor-patch` fails before packaging.
+- Retired xterm patch but `justfile`, `predist*`, or CI still calls `check:vendor-patch` -> false build failure; remove the stale caller instead of reintroducing an obsolete patch.
 - Invalid `package.json` -> `just check` fails during JSON parse.
 - Missing or ignored `build/icon.ico` -> Windows package config is incomplete; fix `.gitignore` and the icon asset before CI.
 - `npm run rebuild` fails with `unknown version "undefined"` on VS 2026 -> the npm override is missing or stale; refresh `package-lock.json` and confirm `node_modules/@electron/node-gyp` resolves to upstream `node-gyp@12.2.0`.
@@ -84,6 +86,7 @@
 - `just check` and `just test` pass on the current platform.
 - `just --dry-run build` shows the platform-specific build sequence.
 - A Node config probe confirms `dist`, `dist:win`, `build.mac`, `build.dmg`, and `build.win`; `dist:win` must still include the local quiet logger and the electron-builder CLI `--win` invocation.
+- A package/justfile probe confirms `check:vendor-patch` is absent when `docs/06-vendor补丁.md` says there is no active vendor patch, and that no `predist*` or `just check` entry still calls it.
 - `git check-ignore -v build/icon.ico` confirms the icon is whitelisted.
 - GitHub Actions on `windows-2022` must upload `dist/*.exe` and `dist/*.zip` for final Windows artifact proof.
 
@@ -97,13 +100,13 @@
 
 `grep` is not a stable Windows command in this repo's npm scripts.
 
-#### Correct
+#### Correct while a manual patch is active
 
 ```json
 "check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\""
 ```
 
-Use Node for cross-platform npm script checks, and let `just` orchestrate platform-specific build steps.
+Use Node for cross-platform npm script checks, and let `just` orchestrate platform-specific build steps. When the vendor patch is retired, delete the script and every caller instead of keeping a dead guard.
 
 ---
 
@@ -397,7 +400,7 @@ Keep HTTP/API ownership in `server.js`, but put platform branching and system co
 
 - Syntax: `node --check electron/platform/power.js electron/platform/clipboard.js electron/platform/screenshot.js electron/main.js public/app.js`.
 - Unit-style platform tests: `npm run test:platform` must include power and clipboard adapter tests.
-- Repo gates: `just check`, `just test`, and `npm run check:vendor-patch`.
+- Repo gates: `just check`, `just test`, and any active vendor-patch guard documented in `docs/06-vendor补丁.md`.
 - Review grep: `rg -n "macOS only" electron public` should not match user-facing IPC errors.
 - Review grep: `rg -n "pmset|visudo|fanbox-pmset|osascript" electron/main.js electron/platform` should find macOS-only commands only in platform adapters.
 - Manual smoke when possible: Windows stay-awake toggle has no admin prompt, Windows copy-file copies path text, macOS Finder file paste and screenshot watch still work.

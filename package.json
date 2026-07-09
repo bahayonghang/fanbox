@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.5.0",
+  "version": "2.6.1",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
@@ -13,12 +13,8 @@
     "rebuild:pty": "cd node_modules/node-pty && node-gyp rebuild --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://www.electronjs.org/headers --arch=$PTY_ARCH",
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
-    "check:vendor-patch": "node -e \"const fs=require('fs');const s=fs.readFileSync('public/vendor/xterm/xterm.js','utf8');if(!s.includes('20===e.keyCode||229===e.keyCode')){console.error('xterm vendor patch missing');process.exit(1)}\"",
     "test:platform": "node scripts/test-platform-shell.js && node scripts/test-platform-env.js && node scripts/test-server-platform.js && node scripts/test-platform-power.js && node scripts/test-platform-clipboard.js && node scripts/test-platform-update.js && node scripts/test-windows-workflow.js && node scripts/test-release-wizard.js && node scripts/test-conpty-smoke.js",
-    "predist": "npm run check:vendor-patch",
-    "predist:win": "npm run check:vendor-patch",
     "dist": "APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --arm64",
-    "predist:x64": "npm run check:vendor-patch",
     "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
     "dist:win": "node -r ./scripts/electron-builder-quiet-log.js ./node_modules/electron-builder/out/cli/cli.js --win --publish never"
   },
@@ -69,10 +65,10 @@
   },
   "dependencies": {
     "@xterm/addon-clipboard": "^0.2.0",
-    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
-    "@xterm/addon-webgl": "^0.18.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
     "node-pty": "^1.0.0",
     "qrcode": "^1.5.4"
   },
