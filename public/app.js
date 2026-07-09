@@ -2847,8 +2847,17 @@ const agentState = { enabled: null, custom: [], launchCommands: {}, loaded: fals
 const agentIconCache = new Map();
 let agentWhichCache = null;
 
+function agentIconKey(id) {
+  return String(id).replace(/[^\w-]/g, '');
+}
+
+function agentAbbrHtml(id, label) {
+  const text = String(label || id || 'AI').trim().slice(0, 2) || 'AI';
+  return `<span class="agent-abbr">${escapeHtml(text)}</span>`;
+}
+
 async function agentIconHtml(id) {
-  const key = String(id).replace(/[^\w-]/g, '');
+  const key = agentIconKey(id);
   if (agentIconCache.has(key)) return agentIconCache.get(key);
   let html = '';
   try {
@@ -2943,8 +2952,8 @@ async function renderAgentButtons() {
     b.dataset.agent = a.id;
     b.id = 'term-' + String(a.id).replace(/[^\w-]/g, '');
     b.title = a.app ? `打开 ${a.label} 桌面应用（该产品无终端 CLI 形态）` : `启动 ${a.label}：空闲终端就地启动，正跑着任务则新开标签`;
-    b.innerHTML = (await agentIconHtml(a.id)) || `<span class="agent-abbr">${escapeHtml(String(a.label || a.id).slice(0, 2))}</span>`;
-    b.onclick = () => { wechatView.close(); term.launchAgent(a.cmd); };
+    b.innerHTML = (await agentIconHtml(a.id)) || agentAbbrHtml(a.id, a.label);
+    b.onclick = () => { wechatView.close(); term.launchAgent(a); };
     anchor.parentElement.insertBefore(b, anchor);
   }
 }
@@ -3009,7 +3018,7 @@ async function hydrateAgentSettingsPage(ov) {
   rows.forEach(async (el) => {
     const id = el.dataset.agentSettingsIc;
     const ic = await agentIconHtml(id);
-    if (document.body.contains(ov) && el.isConnected) el.innerHTML = ic || `<span class="agent-abbr">${escapeHtml(id.slice(0, 2))}</span>`;
+    if (document.body.contains(ov) && el.isConnected) el.innerHTML = ic || agentAbbrHtml(id, id);
   });
   const which = await loadAgentInstallState();
   if (!document.body.contains(ov) || ov.dataset.settingsPage !== 'agents') return;
@@ -3773,8 +3782,13 @@ const term = {
   },
   // 一键在终端启动 coding agent：当前标签是空闲 shell 就地启动；正跑着东西（claude/codex/任何前台程序）
   // 则新开标签，不打断也不把命令打进别的程序里
-  async launchAgent(cmd) {
+  async launchAgent(agent) {
     if (!this.available()) { openWith(state.cwd, 'terminal'); return; } // 网页版降级到系统终端
+    const a = typeof agent === 'string' ? { cmd: agent } : (agent || {});
+    const cmd = cleanAgentCommand(a.cmd);
+    const agentId = cleanAgentId(a.id);
+    const agentLabel = cleanAgentLabel(a.label) || agentId || 'agent';
+    if (!cmd) { toast('Agent 启动命令为空', true); return; }
     let sess = null;
     if (this.sessions.length) {
       if ($('#terminal-panel').classList.contains('hidden')) this.open();
@@ -3782,7 +3796,12 @@ const term = {
       if (cur && !cur.dead && await this.isPlainShell(cur)) sess = cur;
     }
     if (!sess) sess = await this.openInDir(state.cwd); // 等 spawn 完，拿确切 session 写入
-    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast('已在终端启动 ' + cmd); }
+    if (sess && !sess.dead) {
+      if (agentId) { sess.agentId = agentId; sess.agentLabel = agentLabel; }
+      else { delete sess.agentId; delete sess.agentLabel; }
+      this.renderTabs();
+      this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast('已在终端启动 ' + cmd);
+    }
     else toast('终端启动失败', true);
   },
   // 在指定目录新开标签跑命令（续会话/发版等）：不复用别处的空闲 shell，目录必须对
@@ -4158,6 +4177,8 @@ const term = {
   },
   async respawn(sess) {
     sess.dead = false;
+    delete sess.agentId;
+    delete sess.agentLabel;
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
     const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows });
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
@@ -4335,6 +4356,20 @@ const term = {
       else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
+  tabAgentIconHtml(s) {
+    const agentId = cleanAgentId(s.agentId);
+    if (!agentId) return '';
+    const key = agentIconKey(agentId);
+    const hasCached = agentIconCache.has(key);
+    const html = hasCached ? agentIconCache.get(key) : '';
+    if (!hasCached) {
+      agentIconHtml(agentId).then(() => {
+        if (this.sessions.includes(s)) this.renderTabs();
+      }).catch(() => {});
+    }
+    const title = escapeHtml(s.agentLabel || agentId);
+    return `<span class="tab-agent-ic" title="${title}">${html || agentAbbrHtml(agentId, s.agentLabel)}</span>`;
+  },
   renderTabs() {
     const bar = $('#term-tabs');
     bar.innerHTML = '';
@@ -4346,9 +4381,11 @@ const term = {
       const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
       // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
+      const agentTip = s.agentLabel ? `${s.agentLabel} · ` : '';
+      t.title = followed ? agentTip + '文件跟随正盯着这个终端 · 双击跳到它所在目录' : agentTip + '双击：文件区跳到该终端所在目录';
       const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
+      const tabIcon = this.tabAgentIconHtml(s) || ic('term', `hsl(${hue} 62% 48%)`, 12);
+      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${tabIcon}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
       t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
       t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
       bar.appendChild(t);

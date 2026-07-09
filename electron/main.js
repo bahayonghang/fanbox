@@ -16,6 +16,8 @@ const platformClipboard = require('./platform/clipboard');
 const platformScreenshot = require('./platform/screenshot');
 const platformUpdate = require('./platform/update');
 
+const APP_ID = 'com.huashu.fanbox';
+
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
 const PORT = Number(process.env.FANBOX_PORT) || 4567;
@@ -29,6 +31,30 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 const terminals = new Map();
 const termTails = new Map(); // id -> 最近输出尾巴（去 ANSI），给微信 agent 感知别的终端在跑啥/卡哪
 let win = null;
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_ID);
+}
+
+function existingIconPath(fileName) {
+  const roots = [
+    app.getAppPath && app.getAppPath(),
+    path.join(__dirname, '..'),
+    process.resourcesPath,
+  ].filter(Boolean);
+  for (const root of roots) {
+    for (const p of [path.join(root, 'build', fileName), path.join(root, fileName)]) {
+      try { if (fs.existsSync(p)) return p; } catch { /* ignore missing asar/resource probes */ }
+    }
+  }
+  return null;
+}
+
+function windowIconPath() {
+  if (process.platform === 'win32') return existingIconPath('icon.ico');
+  if (process.platform === 'linux') return existingIconPath('icon.png');
+  return null;
+}
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -46,6 +72,7 @@ function saveBounds() {
 
 function createWindow() {
   const b = loadBounds();
+  const icon = windowIconPath();
   win = new BrowserWindow({
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 920, minHeight: 600,
@@ -53,6 +80,7 @@ function createWindow() {
     backgroundColor: '#0b0c0a',
     vibrancy: 'sidebar',
     visualEffectState: 'active',
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -86,7 +114,10 @@ function createWindow() {
 app.whenReady().then(() => {
   // 开发模式下 macOS 默认显示 Electron 图标——换成翻箱自己的（打包后由 electron-builder 的 icon 接管）
   if (process.platform === 'darwin' && app.dock) {
-    try { app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, '..', 'build', 'icon.png'))); } catch { /* */ }
+    try {
+      const icon = existingIconPath('icon.png');
+      if (icon) app.dock.setIcon(nativeImage.createFromPath(icon));
+    } catch { /* */ }
   }
   app.setName('FanBox');
   // 后端跑在 localhost，访问它永不该走代理。个别环境（clash 强制系统代理、企业 PAC 把 loopback 也代理）

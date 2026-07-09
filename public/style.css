@@ -1196,6 +1196,9 @@ kbd {
 .term-tab .tab-dot.dead { background: var(--accent); }
 .term-tab.unread:not(.active) { color: var(--text); }
 .term-tab.unread:not(.active) .tab-dot.idle { background: var(--accent); opacity: 1; }
+.term-tab .tab-agent-ic { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--text); }
+.term-tab .tab-agent-ic svg, .term-tab .tab-agent-ic img { width: 13px; height: 13px; display: block; flex: none; }
+.term-tab .tab-agent-ic .agent-abbr { font-size: 8px; font-weight: 800; line-height: 1; letter-spacing: 0; }
 @keyframes tabpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 /* 变更收件箱：徽章 + 浮层面板 */
 #btn-changes { position: relative; }

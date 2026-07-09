@@ -187,7 +187,10 @@ function verifyAgentLaunchContracts() {
     "{ id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions'",
     "{ id: 'codex', label: 'Codex', cmd: 'codex --dangerously-bypass-approvals-and-sandbox'",
     "const AGENT_DEFAULTS = ['claude', 'codex'];",
-    'term.launchAgent(a.cmd)',
+    'term.launchAgent(a)',
+    'async launchAgent(agent)',
+    'sess.agentId = agentId;',
+    'tabAgentIconHtml(s)',
   ];
   for (const snippet of expected) {
     if (!appJs.includes(snippet)) {
