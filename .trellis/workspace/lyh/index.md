@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-07-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~383 | Active |
+| `journal-1.md` | ~417 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-07-09 | 修复应用与 Agent 标签图标 | `15aab40`, `6d6c678` | `win-dev` |
 | 11 | 2026-07-09 | Merge master updates into win-dev | `f4a3bd0` | `win-dev` |
 | 10 | 2026-07-02 | Agents 启动参数设置 | `9b911148a76a19aab4c32b9295b301da46a5b589` | `win-dev` |
 | 9 | 2026-07-02 | Settings UI theme and font customization | `c218256`, `ce915bc` | `win-dev` |

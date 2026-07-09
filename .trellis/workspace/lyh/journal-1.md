@@ -381,3 +381,37 @@ Created Trellis task, merged origin/master into win-dev, resolved package/public
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 修复应用与 Agent 标签图标
+
+**Date**: 2026-07-09
+**Task**: 修复应用与 Agent 标签图标
+**Branch**: `win-dev`
+
+### Summary
+
+修复 Windows/Electron 运行时窗口图标解析和 Agent 启动标签图标展示，补充 ConPTY/Windows workflow 静态回归与 Trellis 图标契约文档。验证通过 node --check、ConPTY smoke、Windows workflow、npm run test:platform、just check、just test 和临时 Windows 打包资源烟测。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `15aab40` | (see git log) |
+| `6d6c678` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
